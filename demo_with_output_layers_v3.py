@@ -183,30 +183,6 @@ def main():
             load_data_to_gpu(data_dict)
             pred_dicts, _ = model.forward(data_dict)
 
-            # --- NEW: SAVE DATA TO DISK ---
-            if len(frame_buffer) == 0:
-                logger.error(f"!!! Frame {idx}: Buffer is empty. Extraction failed !!!")
-            else:
-                logger.info(f"Frame {idx}: Captured {list(frame_buffer.keys())}")
-                
-            frame_id = Path(demo_dataset.sample_file_list[idx]).stem
-            save_path = save_dir / f"recorded_{frame_id}.pth"
-
-            # Combine the raw points, the backbone layers, and the detections
-            torch.save({
-                'raw_points': data_dict['points'][:, 1:].cpu().numpy(),
-                'layers': frame_buffer.copy(),
-                'detections': {
-                    'boxes': pred_dicts[0]['pred_boxes'].cpu().numpy(),
-                    'scores': pred_dicts[0]['pred_scores'].cpu().numpy(),
-                    'labels': pred_dicts[0]['pred_labels'].cpu().numpy()
-                }
-            }, save_path)
-
-            logger.info(f"--- Extracted features saved to: {save_path} ---")
-            frame_buffer.clear() # Clear for next frame
-            # -------------------------------
-
            # --- DEBUG ALL DETECTIONS (BEFORE FILTERING) ---
             raw_labels = pred_dicts[0]['pred_labels']
             raw_scores = pred_dicts[0]['pred_scores']
@@ -231,6 +207,30 @@ def main():
             pred_dicts[0]['pred_boxes'] = pred_dicts[0]['pred_boxes'][mask]
             pred_dicts[0]['pred_scores'] = pred_dicts[0]['pred_scores'][mask]
             pred_dicts[0]['pred_labels'] = pred_dicts[0]['pred_labels'][mask]
+
+            # --- NEW: SAVE DATA TO DISK ---
+            if len(frame_buffer) == 0:
+                logger.error(f"!!! Frame {idx}: Buffer is empty. Extraction failed !!!")
+            else:
+                logger.info(f"Frame {idx}: Captured {list(frame_buffer.keys())}")
+                
+            frame_id = Path(demo_dataset.sample_file_list[idx]).stem
+            save_path = save_dir / f"recorded_{frame_id}.pth"
+
+            # Combine the raw points, the backbone layers, and the detections
+            torch.save({
+                'raw_points': data_dict['points'][:, 1:].cpu().numpy(),
+                'layers': frame_buffer.copy(),
+                'detections': {
+                    'boxes': pred_dicts[0]['pred_boxes'].cpu().numpy(),
+                    'scores': pred_dicts[0]['pred_scores'].cpu().numpy(),
+                    'labels': pred_dicts[0]['pred_labels'].cpu().numpy()
+                }
+            }, save_path)
+
+            logger.info(f"--- Extracted features saved to: {save_path} ---")
+            frame_buffer.clear() # Clear for next frame
+            # -------------------------------
             
            # --- DEBUG PRINT START ---
  	   # Get the class names from the config
