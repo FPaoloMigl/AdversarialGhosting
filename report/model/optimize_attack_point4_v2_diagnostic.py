@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import numpy as np
-import matplotlib.pyplot as plt
-import types
 from pathlib import Path
 import glob
 
@@ -15,14 +12,10 @@ from pcdet.utils import common_utils
 
 # === CONFIGURATION ===
 SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/report/model/surrogate_model_F4.pth')
-CFG_FILE = '/root/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext.yaml'
+CFG_FILE  = '/root/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext.yaml'
 CKPT_FILE = '/OpenPCDet/checkpoints/voxelnext.pth'
-OUTPUT_DIR = SURROGATE_PATH.parent
 
 LAYER_TO_ATTACK = 'backbone_3d.conv4'
-
-ALPHA = 1.0
-BETA  = 1.0
 
 
 # ---------------------------------------------------------
@@ -30,7 +23,7 @@ BETA  = 1.0
 # ---------------------------------------------------------
 class SurrogateModel(nn.Module):
     def __init__(self, input_dim=2, output_dim=128):
-        super(SurrogateModel, self).__init__()
+        super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 256), nn.BatchNorm1d(256), nn.GELU(),
             nn.Linear(256, 256),       nn.BatchNorm1d(256), nn.GELU(),
@@ -40,122 +33,7 @@ class SurrogateModel(nn.Module):
 
 
 # ---------------------------------------------------------
-# 2. ADVERSARIAL PIPELINE
-# ---------------------------------------------------------
-class AdversarialPipeline(nn.Module):
-    def __init__(self, detector_model, surrogate_model, layer_name):
-        super().__init__()
-        self.detector  = detector_model
-        self.surrogate = surrogate_model
-        self.layer_name = layer_name
-
-        # for param in self.detector.parameters():  param.requires_grad = False
-        for name, param in self.detector.named_parameters():
-            if ('backbone_3d.conv_out' in name or 
-                'backbone_3d.shared_conv' in name or
-                'dense_head' in name):
-                pass  # leave requires_grad=True, set above
-            else:
-                param.requires_grad = False
-        for param in self.surrogate.parameters(): param.requires_grad = False
-
-        self.detector.eval()
-        self.surrogate.eval()
-
-        # Theta is the ONLY leaf variable with grad
-        self.theta = nn.Parameter(
-            torch.tensor([[0.0, 0.0]], dtype=torch.float32), requires_grad=True
-        )
-
-        self.capture_handles  = []
-        self.injection_handle = None
-        self.captured_heatmaps = []
-
-    def _injection_hook(self, module, input, output):
-        # 1. Calculate noise — gradient flows from theta through surrogate
-        delta_phi = self.surrogate(self.theta)          # shape [1, 128]
-
-        if hasattr(output, 'features'):
-            # Broadcast delta_phi to match all N voxels: [1, 128] -> [N, 128]
-            delta_broadcast = delta_phi.expand(output.features.shape[0], -1)
-            perturbed_feats = output.features + delta_broadcast
-            output = output.replace_feature(perturbed_feats)
-
-            # if output.features.grad_fn is not None:
-            #     print(f"  [Injection Hook] SUCCESS — grad_fn: {output.features.grad_fn}")
-            # else:
-            #     print("  [Injection Hook] WARNING: gradient LOST immediately after injection.")
-        return output
-
-    def _capture_hook(self, module, input, output):
-        if hasattr(output, 'features'):
-            self.captured_heatmaps.append(output.features)
-        elif isinstance(output, torch.Tensor):
-            self.captured_heatmaps.append(output)
-
-    def forward(self, batch_dict):
-        self.captured_heatmaps = []
-
-        # 1. Register injection hook once
-        if self.injection_handle is None:
-            modules = dict(self.detector.named_modules())
-            if self.layer_name in modules:
-                target_module = modules[self.layer_name]
-                self.injection_handle = target_module.register_forward_hook(
-                    self._injection_hook
-                )
-            else:
-                print(f"CRITICAL ERROR: Layer '{self.layer_name}' not found!")
-                return None
-
-        # 2. Register capture hooks on all detection heads once
-        if not self.capture_handles:
-            try:
-                heads = self.detector.dense_head.heads_list
-                for head in heads:
-                    self.capture_handles.append(
-                        head.hm.register_forward_hook(self._capture_hook)
-                    )
-            except AttributeError:
-                print("Error: Could not find heads_list.")
-                return None
-
-        # 3. Run the full detector
-        _ = self.detector(batch_dict)
-
-        if not self.captured_heatmaps:
-            return None
-
-        return self.captured_heatmaps
-
-    def cleanup(self):
-        if self.injection_handle:
-            self.injection_handle.remove()
-        for h in self.capture_handles:
-            h.remove()
-
-
-# ---------------------------------------------------------
-# 3. LOSS
-# ---------------------------------------------------------
-def compute_loss(curr_maps_list, clean_maps_list):
-    total_J = 0.0
-
-    for curr_map, clean_map in zip(curr_maps_list, clean_maps_list):
-        curr_flat  = torch.sigmoid(curr_map).view(-1)
-        clean_flat = torch.sigmoid(clean_map).view(-1)
-
-        delta_N = torch.abs(torch.sum(curr_flat) - torch.sum(clean_flat))
-        missing = torch.sum(torch.relu(clean_flat - curr_flat))
-        new     = torch.sum(torch.relu(curr_flat  - clean_flat))
-
-        total_J += delta_N + (ALPHA * missing) + (BETA * new)
-
-    return -total_J, total_J.item()
-
-
-# ---------------------------------------------------------
-# 4. DATASET
+# 2. DATASET
 # ---------------------------------------------------------
 class DemoDataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True,
@@ -173,8 +51,7 @@ class DemoDataset(DatasetTemplate):
         )
         self.sample_file_list.sort()
 
-    def __len__(self):
-        return len(self.sample_file_list)
+    def __len__(self): return len(self.sample_file_list)
 
     def __getitem__(self, index):
         if self.ext == '.bin':
@@ -190,71 +67,265 @@ class DemoDataset(DatasetTemplate):
             padding = np.zeros((points.shape[0], required_dim - points.shape[-1]))
             points  = np.hstack((points, padding))
         elif points.shape[-1] > required_dim:
-            points = points[:, :required_dim]
+            points  = points[:, :required_dim]
 
-        input_dict = {'points': points, 'frame_id': index}
-        data_dict  = self.prepare_data(data_dict=input_dict)
-        return data_dict
+        return self.prepare_data({'points': points, 'frame_id': index})
 
 
 # ---------------------------------------------------------
-# 5. GRADIENT FLOW DIAGNOSTIC
+# 3. INDICE_KEY FIX
 # ---------------------------------------------------------
-def diagnose_gradient_flow(pipeline, data_dict):
-    """
-    Traces gradient flow through every module after the injection point.
-    The first line showing grad_fn=None is the exact break point.
-    """
-    handles  = []
-    backbone = pipeline.detector.backbone_3d
+def fix_head_indice_keys(model):
+    print("--- Fixing indice_key collision in dense_head ---")
+    for i, head in enumerate(model.dense_head.heads_list):
+        for cur_name in head.sep_head_dict:
+            seq = head.__getattr__(cur_name)
+            for module in seq.modules():
+                if hasattr(module, 'indice_key') and module.indice_key is not None:
+                    old_key = module.indice_key
+                    module.indice_key = f"{old_key}_head{i}"
+    print("--- indice_key fix applied ---\n")
 
-    def make_hook(name):
-        def hook(module, input, output):
+
+# ---------------------------------------------------------
+# 4. GRADIENT DIAGNOSTIC
+# ---------------------------------------------------------
+def run_gradient_diagnostic(model, surrogate, data_dict):
+    """
+    Trace gradient flow through every layer by:
+    1. Registering hooks that capture output tensors at each layer
+    2. Running forward with injection at conv4
+    3. Calling backward from a simple loss on the heatmaps
+    4. Checking .grad on every captured tensor using retain_grad()
+    """
+
+    theta = nn.Parameter(
+        torch.tensor([[0.0, 0.0]], dtype=torch.float32, device='cuda'),
+        requires_grad=True
+    )
+
+    # Enable grad on backbone + dense_head so grad_input can flow
+    for name, param in model.named_parameters():
+        if 'backbone_3d' in name or 'dense_head' in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
+
+    # ----------------------------------------------------------------
+    # Track tensors at every stage
+    # ----------------------------------------------------------------
+    tracked = {}   # name -> tensor (with retain_grad)
+    handles = []
+
+    def make_forward_hook(name):
+        def hook(module, inp, output):
             if hasattr(output, 'features'):
-                feat = output.features
-                print(f"  [{name:<20}] sparse  | shape={str(feat.shape):<22} | "
-                      f"requires_grad={feat.requires_grad} | grad_fn={feat.grad_fn}")
+                t = output.features
             elif isinstance(output, torch.Tensor):
-                print(f"  [{name:<20}] tensor  | shape={str(output.shape):<22} | "
-                      f"requires_grad={output.requires_grad} | grad_fn={output.grad_fn}")
+                t = output
             else:
-                print(f"  [{name:<20}] unknown | type={type(output)}")
+                return
+            t.retain_grad()
+            tracked[name] = t
         return hook
 
-    layers_to_watch = [
-        ('conv5',       backbone.conv5),
-        ('conv6',       backbone.conv6),
-        ('conv_out',    backbone.conv_out),
-        ('shared_conv', backbone.shared_conv),
+    # ----------------------------------------------------------------
+    # A) Track backbone layers
+    # ----------------------------------------------------------------
+    backbone_layers = [
+        'backbone_3d.conv_input',
+        'backbone_3d.conv1',
+        'backbone_3d.conv2',
+        'backbone_3d.conv3',
+        'backbone_3d.conv4',
+        'backbone_3d.conv5',
+        'backbone_3d.conv6',
     ]
-    for name, module in layers_to_watch:
-        handles.append(module.register_forward_hook(make_hook(name)))
 
-    # Wrap bev_out to see input AND output grad_fn
-    original_bev_out = backbone.bev_out
-    def traced_bev_out(x_conv):
-        print(f"  [{'bev_out INPUT':<20}] sparse  | shape={str(x_conv.features.shape):<22} | "
-              f"requires_grad={x_conv.features.requires_grad} | grad_fn={x_conv.features.grad_fn}")
-        result = original_bev_out(x_conv)
-        print(f"  [{'bev_out OUTPUT':<20}] sparse  | shape={str(result.features.shape):<22} | "
-              f"requires_grad={result.features.requires_grad} | grad_fn={result.features.grad_fn}")
-        return result
-    backbone.bev_out = traced_bev_out
+    modules_dict = dict(model.named_modules())
 
-    print("\n" + "="*70)
-    print("  GRADIENT FLOW DIAGNOSTIC (first None = break point)")
-    print("="*70)
-    _ = pipeline(data_dict)
-    print("="*70 + "\n")
+    for layer_name in backbone_layers:
+        if layer_name in modules_dict:
+            handles.append(
+                modules_dict[layer_name].register_forward_hook(make_forward_hook(layer_name))
+            )
 
+    # ----------------------------------------------------------------
+    # B) Track dense_head shared_conv and conv_out if they exist
+    # ----------------------------------------------------------------
+    for extra in ['dense_head.shared_conv', 'dense_head.conv_out']:
+        if extra in modules_dict:
+            handles.append(
+                modules_dict[extra].register_forward_hook(make_forward_hook(extra))
+            )
+
+    # ----------------------------------------------------------------
+    # C) Track each head's hm output
+    # ----------------------------------------------------------------
+    for i, head in enumerate(model.dense_head.heads_list):
+        name = f'dense_head.heads_list[{i}].hm'
+        handles.append(
+            head.hm.register_forward_hook(make_forward_hook(name))
+        )
+
+    # ----------------------------------------------------------------
+    # D) Injection hook at conv4
+    # ----------------------------------------------------------------
+    def injection_hook(module, inp, output):
+        delta_phi = surrogate(theta)                                    # [1, 128]
+        delta = delta_phi.expand(output.features.shape[0], -1)         # [N, 128]
+        new_output = output.replace_feature(output.features + delta)
+        return new_output
+
+    injection_handle = modules_dict[LAYER_TO_ATTACK].register_forward_hook(injection_hook)
+
+    # ----------------------------------------------------------------
+    # E) Also track the surrogate output and delta directly
+    # ----------------------------------------------------------------
+    surrogate_out = surrogate(theta)
+    surrogate_out.retain_grad()
+    tracked['surrogate_output'] = surrogate_out
+
+    # ----------------------------------------------------------------
+    # F) Forward pass
+    # ----------------------------------------------------------------
+    print("=" * 70)
+    print("RUNNING FORWARD PASS WITH INJECTION")
+    print("=" * 70)
+
+    model.zero_grad()
+    surrogate.zero_grad()
+    if theta.grad is not None:
+        theta.grad.zero_()
+
+    _ = model(data_dict)
+
+    # ----------------------------------------------------------------
+    # G) Build loss from all captured heatmaps
+    # ----------------------------------------------------------------
+    heatmap_keys = [k for k in tracked if 'heads_list' in k and 'hm' in k]
+    if not heatmap_keys:
+        print("❌ No heatmaps captured!")
+        for h in handles:
+            h.remove()
+        injection_handle.remove()
+        return
+
+    loss = sum(tracked[k].sum() for k in heatmap_keys)
+    print(f"\nLoss = {loss.item():.6f} (sum of all heatmap features)")
+
+    # ----------------------------------------------------------------
+    # H) Backward
+    # ----------------------------------------------------------------
+    print("\nRUNNING BACKWARD...")
+    loss.backward()
+
+    # ----------------------------------------------------------------
+    # I) Report gradient status at every tracked point
+    # ----------------------------------------------------------------
+    print("\n" + "=" * 70)
+    print("GRADIENT FLOW REPORT")
+    print("=" * 70)
+
+    # Order: backbone → dense_head → heatmaps → surrogate → theta
+    report_order = (
+        backbone_layers +
+        ['dense_head.shared_conv', 'dense_head.conv_out'] +
+        sorted(heatmap_keys) +
+        ['surrogate_output']
+    )
+
+    for name in report_order:
+        if name not in tracked:
+            print(f"  {'⚪':2s} {name:50s} — NOT CAPTURED")
+            continue
+
+        t = tracked[name]
+        if t.grad is not None:
+            grad_norm = t.grad.abs().sum().item()
+            grad_max  = t.grad.abs().max().item()
+            status = "✅" if grad_norm > 0 else "⚠️  (all zeros)"
+            print(f"  {status:2s} {name:50s} | grad_norm={grad_norm:.6e} | grad_max={grad_max:.6e} | shape={list(t.shape)}")
+        else:
+            print(f"  {'❌':2s} {name:50s} | grad=None | shape={list(t.shape)}")
+
+    # Theta itself
+    print(f"\n  --- THETA ---")
+    if theta.grad is not None:
+        print(f"  ✅ theta.grad = {theta.grad} | norm={theta.grad.abs().sum().item():.6e}")
+    else:
+        print(f"  ❌ theta.grad = None")
+
+    # ----------------------------------------------------------------
+    # J) Extra: check grad_fn chain from conv4 output
+    # ----------------------------------------------------------------
+    print(f"\n{'=' * 70}")
+    print("AUTOGRAD GRAPH TRACE FROM conv4 OUTPUT")
+    print("=" * 70)
+
+    if 'backbone_3d.conv4' in tracked:
+        t = tracked['backbone_3d.conv4']
+        print(f"  conv4 output grad_fn: {t.grad_fn}")
+
+        # Walk 5 levels of grad_fn
+        fn = t.grad_fn
+        for depth in range(5):
+            if fn is None:
+                print(f"    depth {depth}: None — end of graph")
+                break
+            print(f"    depth {depth}: {fn.__class__.__name__}")
+            next_fns = fn.next_functions
+            if next_fns:
+                print(f"      next_functions: {[(f[0].__class__.__name__ if f[0] else 'None') for f in next_fns]}")
+                # Follow the first branch
+                fn = next_fns[0][0] if next_fns[0][0] else None
+            else:
+                break
+
+    # ----------------------------------------------------------------
+    # K) Extra: check grad_fn chain from conv5 input perspective
+    # ----------------------------------------------------------------
+    print(f"\n{'=' * 70}")
+    print("AUTOGRAD GRAPH TRACE FROM conv5 OUTPUT")
+    print("=" * 70)
+
+    if 'backbone_3d.conv5' in tracked:
+        t = tracked['backbone_3d.conv5']
+        print(f"  conv5 output grad_fn: {t.grad_fn}")
+
+        fn = t.grad_fn
+        for depth in range(8):
+            if fn is None:
+                print(f"    depth {depth}: None — end of graph")
+                break
+            print(f"    depth {depth}: {fn.__class__.__name__}")
+            next_fns = fn.next_functions
+            if next_fns:
+                names = [(f[0].__class__.__name__ if f[0] else 'None') for f in next_fns]
+                print(f"      next_functions: {names}")
+                # Follow first non-None branch
+                fn = None
+                for f in next_fns:
+                    if f[0] is not None:
+                        fn = f[0]
+                        break
+            else:
+                break
+
+    # ----------------------------------------------------------------
     # Cleanup
+    # ----------------------------------------------------------------
     for h in handles:
         h.remove()
-    backbone.bev_out = original_bev_out
+    injection_handle.remove()
+
+    print(f"\n{'=' * 70}")
+    print("DIAGNOSTIC COMPLETE")
+    print("=" * 70)
 
 
 # ---------------------------------------------------------
-# 6. MAIN
+# 5. MAIN
 # ---------------------------------------------------------
 def main():
     DATA_PATH = Path(
@@ -266,6 +337,7 @@ def main():
         print(f"Error: Data file not found at {DATA_PATH}")
         return
 
+    # Load model
     print("--- Loading VoxelNeXt ---")
     cfg_from_yaml_file(CFG_FILE, cfg)
     demo_dataset = DemoDataset(
@@ -277,119 +349,21 @@ def main():
     model.cuda()
     model.eval()
 
-    # To check!!
-    for param in model.backbone_3d.conv_out.parameters():
-        param.requires_grad = True
-    for param in model.backbone_3d.shared_conv.parameters():
-        param.requires_grad = True
-    for param in model.dense_head.parameters():   # ← ADD THIS
-        param.requires_grad = True
+    fix_head_indice_keys(model)
 
-    with torch.no_grad():
-        data_dict = demo_dataset[0]
-        data_dict = demo_dataset.collate_batch([data_dict])
-        load_data_to_gpu(data_dict)
+    # Prepare data
+    data_dict = demo_dataset[0]
+    data_dict = demo_dataset.collate_batch([data_dict])
+    load_data_to_gpu(data_dict)
 
-    print(f"--- Preparing Attack on '{LAYER_TO_ATTACK}' ---")
+    # Load surrogate
     surrogate = SurrogateModel()
     surrogate.load_state_dict(torch.load(SURROGATE_PATH))
     surrogate.cuda()
+    surrogate.eval()
 
-    pipeline = AdversarialPipeline(model, surrogate, LAYER_TO_ATTACK)
-    pipeline.cuda()
-
-    # ------------------------------------------------------------------
-    # Clean baseline (no grad needed)
-    # ------------------------------------------------------------------
-    print("--- Computing Clean Baseline ---")
-    with torch.no_grad():
-        clean_maps_list = pipeline(data_dict)
-        if clean_maps_list is None:
-            print("Failed to capture baseline. Exiting.")
-            return
-        clean_maps_const = [t.detach() for t in clean_maps_list]
-        act = sum([torch.sigmoid(t).sum().item() for t in clean_maps_const])
-        print(f"Clean Baseline Activity: {act:.4f}")
-
-    # ------------------------------------------------------------------
-    # GRADIENT FLOW DIAGNOSTIC — run once before optimization
-    # ------------------------------------------------------------------
-    diagnose_gradient_flow(pipeline, data_dict)
-
-    # ------------------------------------------------------------------
-    # Optimization
-    # ------------------------------------------------------------------
-    optimizer = optim.Adam([pipeline.theta], lr=0.1)
-    print("--- STARTING OPTIMIZATION ---")
-
-    history   = []
-    best_J    = -1
-    best_theta = None
-
-    try:
-        for i in range(50):
-            optimizer.zero_grad()
-
-            curr_maps_list = pipeline(data_dict)
-
-            # ADD THIS
-            for i, hm in enumerate(curr_maps_list):
-                print(f"  heatmap[{i}] grad_fn={hm.grad_fn}, requires_grad={hm.requires_grad}")
-
-            if curr_maps_list is None:
-                print("No heatmaps captured — aborting.")
-                break
-
-            loss, J_val = compute_loss(curr_maps_list, clean_maps_const)
-
-            loss.backward()
-
-            print(f"  theta.grad = {pipeline.theta.grad}")
-
-            optimizer.step()
-
-            with torch.no_grad():
-                pipeline.theta.clamp_(-3.5, 3.5)
-
-                # To check
-                model.backbone_3d.conv_out.zero_grad()
-                model.backbone_3d.shared_conv.zero_grad()
-
-            if J_val > best_J:
-                best_J    = J_val
-                best_theta = pipeline.theta.detach().cpu().numpy()[0].copy()
-
-            history.append(J_val)
-
-            if i % 10 == 0:
-                theta_curr = pipeline.theta.detach().cpu().numpy()[0]
-                print(f"  Step {i:>3}: theta=({theta_curr[0]:+.3f}, {theta_curr[1]:+.3f}) | J={J_val:.4f}")
-
-    except Exception as e:
-        import traceback
-        print(f"\nError during optimization:\n{traceback.format_exc()}")
-    finally:
-        pipeline.cleanup()
-
-    # ------------------------------------------------------------------
-    # Results
-    # ------------------------------------------------------------------
-    if best_theta is not None:
-        print(f"\n✅  OPTIMAL ATTACK FOUND")
-        print(f"    Reflector position : x={best_theta[0]:.4f}, y={best_theta[1]:.4f}")
-        print(f"    Max objective J    : {best_J:.4f}")
-
-        plt.figure(figsize=(8, 5))
-        plt.plot(history)
-        plt.xlabel("Iteration")
-        plt.ylabel("J(θ)")
-        plt.title("Attack Optimization — Objective over Iterations")
-        plt.tight_layout()
-        out_path = OUTPUT_DIR / "attack_optimization_J_theta.png"
-        plt.savefig(out_path)
-        print(f"    Plot saved to      : {out_path}")
-    else:
-        print("\n❌  Optimization failed — check diagnostic output above.")
+    # Run diagnostic
+    run_gradient_diagnostic(model, surrogate, data_dict)
 
 
 if __name__ == '__main__':
