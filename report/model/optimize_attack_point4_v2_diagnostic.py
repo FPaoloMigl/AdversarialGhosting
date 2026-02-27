@@ -91,13 +91,6 @@ def fix_head_indice_keys(model):
 # 4. GRADIENT DIAGNOSTIC
 # ---------------------------------------------------------
 def run_gradient_diagnostic(model, surrogate, data_dict):
-    """
-    Trace gradient flow through every layer by:
-    1. Registering hooks that capture output tensors at each layer
-    2. Running forward with injection at conv4
-    3. Calling backward from a simple loss on the heatmaps
-    4. Checking .grad on every captured tensor using retain_grad()
-    """
 
     theta = nn.Parameter(
         torch.tensor([[0.0, 0.0]], dtype=torch.float32, device='cuda'),
@@ -111,10 +104,29 @@ def run_gradient_diagnostic(model, surrogate, data_dict):
         else:
             param.requires_grad = False
 
+    # ================================================================
+    # [FIX 1]: FORCE THE PSEUDO-TRAIN MODE ON SPCONV
+    # ================================================================
+    model.eval() # Start with everything in eval
+    for name, module in model.named_modules():
+        if 'backbone_3d' in name:
+            module.train() # Force spconv convolutions to train mode
+        # Freeze all batch norms so statistics aren't corrupted
+        if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            module.eval()
+            
+    # ================================================================
+    # [FIX 2]: INITIALIZE THE GRADIENT TAPE AT THE DATA INPUT
+    # ================================================================
+    if 'voxel_features' in data_dict:
+        data_dict['voxel_features'].requires_grad_(True)
+    if 'points' in data_dict:
+        data_dict['points'].requires_grad_(True)
+
     # ----------------------------------------------------------------
     # Track tensors at every stage
     # ----------------------------------------------------------------
-    tracked = {}   # name -> tensor (with retain_grad)
+    tracked = {}   
     handles = []
 
     def make_forward_hook(name):
@@ -129,59 +141,36 @@ def run_gradient_diagnostic(model, surrogate, data_dict):
             tracked[name] = t
         return hook
 
-    # ----------------------------------------------------------------
     # A) Track backbone layers
-    # ----------------------------------------------------------------
     backbone_layers = [
-        'backbone_3d.conv_input',
-        'backbone_3d.conv1',
-        'backbone_3d.conv2',
-        'backbone_3d.conv3',
-        'backbone_3d.conv4',
-        'backbone_3d.conv5',
-        'backbone_3d.conv6',
+        'backbone_3d.conv_input', 'backbone_3d.conv1', 'backbone_3d.conv2',
+        'backbone_3d.conv3', 'backbone_3d.conv4', 'backbone_3d.conv5', 'backbone_3d.conv6',
     ]
-
     modules_dict = dict(model.named_modules())
-
     for layer_name in backbone_layers:
         if layer_name in modules_dict:
-            handles.append(
-                modules_dict[layer_name].register_forward_hook(make_forward_hook(layer_name))
-            )
+            handles.append(modules_dict[layer_name].register_forward_hook(make_forward_hook(layer_name)))
 
-    # ----------------------------------------------------------------
-    # B) Track dense_head shared_conv and conv_out if they exist
-    # ----------------------------------------------------------------
+    # B) Track dense_head shared_conv and conv_out
     for extra in ['dense_head.shared_conv', 'dense_head.conv_out']:
         if extra in modules_dict:
-            handles.append(
-                modules_dict[extra].register_forward_hook(make_forward_hook(extra))
-            )
+            handles.append(modules_dict[extra].register_forward_hook(make_forward_hook(extra)))
 
-    # ----------------------------------------------------------------
     # C) Track each head's hm output
-    # ----------------------------------------------------------------
     for i, head in enumerate(model.dense_head.heads_list):
         name = f'dense_head.heads_list[{i}].hm'
-        handles.append(
-            head.hm.register_forward_hook(make_forward_hook(name))
-        )
+        handles.append(head.hm.register_forward_hook(make_forward_hook(name)))
 
-    # ----------------------------------------------------------------
     # D) Injection hook at conv4
-    # ----------------------------------------------------------------
     def injection_hook(module, inp, output):
-        delta_phi = surrogate(theta)                                    # [1, 128]
-        delta = delta_phi.expand(output.features.shape[0], -1)         # [N, 128]
+        delta_phi = surrogate(theta)                                   
+        delta = delta_phi.expand(output.features.shape[0], -1)         
         new_output = output.replace_feature(output.features + delta)
         return new_output
 
     injection_handle = modules_dict[LAYER_TO_ATTACK].register_forward_hook(injection_hook)
 
-    # ----------------------------------------------------------------
-    # E) Also track the surrogate output and delta directly
-    # ----------------------------------------------------------------
+    # E) Track the surrogate output and delta directly
     surrogate_out = surrogate(theta)
     surrogate_out.retain_grad()
     tracked['surrogate_output'] = surrogate_out
@@ -190,7 +179,7 @@ def run_gradient_diagnostic(model, surrogate, data_dict):
     # F) Forward pass
     # ----------------------------------------------------------------
     print("=" * 70)
-    print("RUNNING FORWARD PASS WITH INJECTION")
+    print("RUNNING FORWARD PASS WITH INJECTION (PSEUDO-TRAIN MODE)")
     print("=" * 70)
 
     model.zero_grad()
@@ -227,7 +216,6 @@ def run_gradient_diagnostic(model, surrogate, data_dict):
     print("GRADIENT FLOW REPORT")
     print("=" * 70)
 
-    # Order: backbone → dense_head → heatmaps → surrogate → theta
     report_order = (
         backbone_layers +
         ['dense_head.shared_conv', 'dense_head.conv_out'] +
@@ -249,72 +237,13 @@ def run_gradient_diagnostic(model, surrogate, data_dict):
         else:
             print(f"  {'❌':2s} {name:50s} | grad=None | shape={list(t.shape)}")
 
-    # Theta itself
     print(f"\n  --- THETA ---")
     if theta.grad is not None:
         print(f"  ✅ theta.grad = {theta.grad} | norm={theta.grad.abs().sum().item():.6e}")
     else:
         print(f"  ❌ theta.grad = None")
 
-    # ----------------------------------------------------------------
-    # J) Extra: check grad_fn chain from conv4 output
-    # ----------------------------------------------------------------
-    print(f"\n{'=' * 70}")
-    print("AUTOGRAD GRAPH TRACE FROM conv4 OUTPUT")
-    print("=" * 70)
-
-    if 'backbone_3d.conv4' in tracked:
-        t = tracked['backbone_3d.conv4']
-        print(f"  conv4 output grad_fn: {t.grad_fn}")
-
-        # Walk 5 levels of grad_fn
-        fn = t.grad_fn
-        for depth in range(5):
-            if fn is None:
-                print(f"    depth {depth}: None — end of graph")
-                break
-            print(f"    depth {depth}: {fn.__class__.__name__}")
-            next_fns = fn.next_functions
-            if next_fns:
-                print(f"      next_functions: {[(f[0].__class__.__name__ if f[0] else 'None') for f in next_fns]}")
-                # Follow the first branch
-                fn = next_fns[0][0] if next_fns[0][0] else None
-            else:
-                break
-
-    # ----------------------------------------------------------------
-    # K) Extra: check grad_fn chain from conv5 input perspective
-    # ----------------------------------------------------------------
-    print(f"\n{'=' * 70}")
-    print("AUTOGRAD GRAPH TRACE FROM conv5 OUTPUT")
-    print("=" * 70)
-
-    if 'backbone_3d.conv5' in tracked:
-        t = tracked['backbone_3d.conv5']
-        print(f"  conv5 output grad_fn: {t.grad_fn}")
-
-        fn = t.grad_fn
-        for depth in range(8):
-            if fn is None:
-                print(f"    depth {depth}: None — end of graph")
-                break
-            print(f"    depth {depth}: {fn.__class__.__name__}")
-            next_fns = fn.next_functions
-            if next_fns:
-                names = [(f[0].__class__.__name__ if f[0] else 'None') for f in next_fns]
-                print(f"      next_functions: {names}")
-                # Follow first non-None branch
-                fn = None
-                for f in next_fns:
-                    if f[0] is not None:
-                        fn = f[0]
-                        break
-            else:
-                break
-
-    # ----------------------------------------------------------------
     # Cleanup
-    # ----------------------------------------------------------------
     for h in handles:
         h.remove()
     injection_handle.remove()
@@ -337,7 +266,6 @@ def main():
         print(f"Error: Data file not found at {DATA_PATH}")
         return
 
-    # Load model
     print("--- Loading VoxelNeXt ---")
     cfg_from_yaml_file(CFG_FILE, cfg)
     demo_dataset = DemoDataset(
@@ -347,22 +275,20 @@ def main():
     model = build_network(cfg.MODEL, len(cfg.CLASS_NAMES), demo_dataset)
     model.load_params_from_file(CKPT_FILE, logger=logger, to_cpu=True)
     model.cuda()
-    model.eval()
-
+    
+    # NOTE: model.eval() has been removed here. It is handled inside run_gradient_diagnostic.
+    
     fix_head_indice_keys(model)
 
-    # Prepare data
     data_dict = demo_dataset[0]
     data_dict = demo_dataset.collate_batch([data_dict])
     load_data_to_gpu(data_dict)
 
-    # Load surrogate
     surrogate = SurrogateModel()
     surrogate.load_state_dict(torch.load(SURROGATE_PATH))
     surrogate.cuda()
     surrogate.eval()
 
-    # Run diagnostic
     run_gradient_diagnostic(model, surrogate, data_dict)
 
 
