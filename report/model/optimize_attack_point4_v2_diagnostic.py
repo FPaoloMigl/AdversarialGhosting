@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import numpy as np
 from pathlib import Path
 import glob
@@ -88,169 +89,119 @@ def fix_head_indice_keys(model):
 
 
 # ---------------------------------------------------------
-# 4. GRADIENT DIAGNOSTIC
+# 4. ADVERSARIAL OPTIMIZATION LOOP
 # ---------------------------------------------------------
-def run_gradient_diagnostic(model, surrogate, data_dict):
+def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack, head_idx=0, num_iters=100, lr=0.1, alpha=1.0, beta=0.5):
+    """
+    Executes Part III: Optimizes theta based on Missing and New detection proxies.
+    """
+    print("\n" + "="*50)
+    print("PHASE 1: COMPUTING CLEAN BASELINE (y_0)")
+    print("="*50)
 
+    # 1. Ensure model is in the correct Pseudo-Train state
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    model.eval()
+    for name, module in model.named_modules():
+        if 'backbone_3d' in name:
+            module.train() # Keep spconv graph alive
+        if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            module.eval()
+
+    # 2. Run Clean Forward Pass
+    with torch.no_grad():
+        _ = model(data_dict)
+        # Extract the clean heatmap for the target head (e.g., Cars)
+        clean_hm_logits = model.dense_head.forward_ret_dict['pred_dicts'][head_idx]['hm']
+        H_0 = torch.sigmoid(clean_hm_logits).detach()
+
+    # 3. Define the Spatial Masks (M_obj and M_bg)
+    TAU_OBJ = 0.3  # Threshold for existing objects
+    TAU_BG  = 0.05 # Threshold for background
+    
+    mask_obj = (H_0 > TAU_OBJ)
+    mask_bg  = (H_0 < TAU_BG)
+    
+    print(f"Detected {mask_obj.sum().item()} features belonging to real objects.")
+    print(f"Detected {mask_bg.sum().item()} features belonging to background.")
+
+    print("\n" + "="*50)
+    print(f"PHASE 2: OPTIMIZING THETA (Gradient Ascent on J(theta))")
+    print("="*50)
+
+    # 4. Initialize Theta (x, y placement)
     theta = nn.Parameter(
         torch.tensor([[0.0, 0.0]], dtype=torch.float32, device='cuda'),
         requires_grad=True
     )
+    optimizer = optim.Adam([theta], lr=lr)
 
-    # Enable grad on backbone + dense_head so grad_input can flow
-    for name, param in model.named_parameters():
-        if 'backbone_3d' in name or 'dense_head' in name:
-            param.requires_grad = True
-        else:
-            param.requires_grad = False
-
-    # ================================================================
-    # [FIX 1]: FORCE THE PSEUDO-TRAIN MODE ON SPCONV
-    # ================================================================
-    model.eval() # Start with everything in eval
-    for name, module in model.named_modules():
-        if 'backbone_3d' in name:
-            module.train() # Force spconv convolutions to train mode
-        # Freeze all batch norms so statistics aren't corrupted
-        if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
-            module.eval()
-            
-    # ================================================================
-    # [FIX 2]: INITIALIZE THE GRADIENT TAPE AT THE DATA INPUT
-    # ================================================================
-    if 'voxel_features' in data_dict:
-        data_dict['voxel_features'].requires_grad_(True)
-    if 'points' in data_dict:
-        data_dict['points'].requires_grad_(True)
-
-    # ----------------------------------------------------------------
-    # Track tensors at every stage
-    # ----------------------------------------------------------------
-    tracked = {}   
+    # 5. Setup the Differentiable Pipeline (Hooks)
+    tracked_hm = {}
     handles = []
 
-    def make_forward_hook(name):
+    def make_hm_hook():
         def hook(module, inp, output):
-            if hasattr(output, 'features'):
-                t = output.features
-            elif isinstance(output, torch.Tensor):
-                t = output
-            else:
-                return
-            t.retain_grad()
-            tracked[name] = t
+            tracked_hm['adv_hm'] = output.features if hasattr(output, 'features') else output
         return hook
 
-    # A) Track backbone layers
-    backbone_layers = [
-        'backbone_3d.conv_input', 'backbone_3d.conv1', 'backbone_3d.conv2',
-        'backbone_3d.conv3', 'backbone_3d.conv4', 'backbone_3d.conv5', 'backbone_3d.conv6',
-    ]
+    # Hook the target head to get \hat{y}(\theta)
     modules_dict = dict(model.named_modules())
-    for layer_name in backbone_layers:
-        if layer_name in modules_dict:
-            handles.append(modules_dict[layer_name].register_forward_hook(make_forward_hook(layer_name)))
+    target_head = model.dense_head.heads_list[head_idx].hm
+    handles.append(target_head.register_forward_hook(make_hm_hook()))
 
-    # B) Track dense_head shared_conv and conv_out
-    for extra in ['dense_head.shared_conv', 'dense_head.conv_out']:
-        if extra in modules_dict:
-            handles.append(modules_dict[extra].register_forward_hook(make_forward_hook(extra)))
-
-    # C) Track each head's hm output
-    for i, head in enumerate(model.dense_head.heads_list):
-        name = f'dense_head.heads_list[{i}].hm'
-        handles.append(head.hm.register_forward_hook(make_forward_hook(name)))
-
-    # D) Injection hook at conv4
+    # Hook the chosen layer \ell to inject g_\ell(\theta)
     def injection_hook(module, inp, output):
         delta_phi = surrogate(theta)                                   
         delta = delta_phi.expand(output.features.shape[0], -1)         
         new_output = output.replace_feature(output.features + delta)
         return new_output
+    
+    handles.append(modules_dict[layer_to_attack].register_forward_hook(injection_hook))
 
-    injection_handle = modules_dict[LAYER_TO_ATTACK].register_forward_hook(injection_hook)
+    # 6. Optimization Loop
+    for step in range(num_iters):
+        optimizer.zero_grad()
+        tracked_hm.clear()
 
-    # E) Track the surrogate output and delta directly
-    surrogate_out = surrogate(theta)
-    surrogate_out.retain_grad()
-    tracked['surrogate_output'] = surrogate_out
+        # Re-initialize grad tape for the backbone features
+        if 'voxel_features' in data_dict:
+            data_dict['voxel_features'].requires_grad_(True)
 
-    # ----------------------------------------------------------------
-    # F) Forward pass
-    # ----------------------------------------------------------------
-    print("=" * 70)
-    print("RUNNING FORWARD PASS WITH INJECTION (PSEUDO-TRAIN MODE)")
-    print("=" * 70)
+        # Forward Pass through differentiable pipeline
+        _ = model(data_dict)
+        
+        # Get \hat{H}_\theta
+        H_adv = torch.sigmoid(tracked_hm['adv_hm'])
 
-    model.zero_grad()
-    surrogate.zero_grad()
-    if theta.grad is not None:
-        theta.grad.zero_()
+        # Calculate Differentiable Proxies
+        # 1. Missing Proxy: Suppress H_adv where mask_obj is True
+        loss_missing = H_adv[mask_obj].mean() if mask_obj.sum() > 0 else torch.tensor(0.0, device='cuda')
+        
+        # 2. New Proxy: Excite H_adv where mask_bg is True
+        loss_new = H_adv[mask_bg].mean() if mask_bg.sum() > 0 else torch.tensor(0.0, device='cuda')
 
-    _ = model(data_dict)
+        # Combined Objective (Minimize this to Maximize Disruption)
+        # We subtract loss_new because we want the optimizer to push fake detections UP
+        loss = (alpha * loss_missing) - (beta * loss_new)
 
-    # ----------------------------------------------------------------
-    # G) Build loss from all captured heatmaps
-    # ----------------------------------------------------------------
-    heatmap_keys = [k for k in tracked if 'heads_list' in k and 'hm' in k]
-    if not heatmap_keys:
-        print("❌ No heatmaps captured!")
-        for h in handles:
-            h.remove()
-        injection_handle.remove()
-        return
+        loss.backward()
+        optimizer.step()
 
-    loss = sum(tracked[k].sum() for k in heatmap_keys)
-    print(f"\nLoss = {loss.item():.6f} (sum of all heatmap features)")
-
-    # ----------------------------------------------------------------
-    # H) Backward
-    # ----------------------------------------------------------------
-    print("\nRUNNING BACKWARD...")
-    loss.backward()
-
-    # ----------------------------------------------------------------
-    # I) Report gradient status at every tracked point
-    # ----------------------------------------------------------------
-    print("\n" + "=" * 70)
-    print("GRADIENT FLOW REPORT")
-    print("=" * 70)
-
-    report_order = (
-        backbone_layers +
-        ['dense_head.shared_conv', 'dense_head.conv_out'] +
-        sorted(heatmap_keys) +
-        ['surrogate_output']
-    )
-
-    for name in report_order:
-        if name not in tracked:
-            print(f"  {'⚪':2s} {name:50s} — NOT CAPTURED")
-            continue
-
-        t = tracked[name]
-        if t.grad is not None:
-            grad_norm = t.grad.abs().sum().item()
-            grad_max  = t.grad.abs().max().item()
-            status = "✅" if grad_norm > 0 else "⚠️  (all zeros)"
-            print(f"  {status:2s} {name:50s} | grad_norm={grad_norm:.6e} | grad_max={grad_max:.6e} | shape={list(t.shape)}")
-        else:
-            print(f"  {'❌':2s} {name:50s} | grad=None | shape={list(t.shape)}")
-
-    print(f"\n  --- THETA ---")
-    if theta.grad is not None:
-        print(f"  ✅ theta.grad = {theta.grad} | norm={theta.grad.abs().sum().item():.6e}")
-    else:
-        print(f"  ❌ theta.grad = None")
+        # Logging
+        if step % 10 == 0 or step == num_iters - 1:
+            print(f"Iter {step:03d} | Total Loss: {loss.item():.4f} | "
+                  f"Missing Proxy: {loss_missing.item():.4f} | New Proxy: {loss_new.item():.4f} | "
+                  f"Theta: [{theta[0,0].item():.4f}, {theta[0,1].item():.4f}]")
 
     # Cleanup
     for h in handles:
         h.remove()
-    injection_handle.remove()
 
-    print(f"\n{'=' * 70}")
-    print("DIAGNOSTIC COMPLETE")
-    print("=" * 70)
+    print("\nOptimization Complete.")
+    return theta.detach()
 
 
 # ---------------------------------------------------------
@@ -276,20 +227,34 @@ def main():
     model.load_params_from_file(CKPT_FILE, logger=logger, to_cpu=True)
     model.cuda()
     
-    # NOTE: model.eval() has been removed here. It is handled inside run_gradient_diagnostic.
-    
     fix_head_indice_keys(model)
 
+    # Prepare Data
     data_dict = demo_dataset[0]
     data_dict = demo_dataset.collate_batch([data_dict])
     load_data_to_gpu(data_dict)
 
+    # Load Surrogate
     surrogate = SurrogateModel()
     surrogate.load_state_dict(torch.load(SURROGATE_PATH))
     surrogate.cuda()
     surrogate.eval()
 
-    run_gradient_diagnostic(model, surrogate, data_dict)
+    # Execute Part C: Optimize Placement
+    # head_idx=0 usually corresponds to the first class in your YAML (e.g., 'car')
+    optimal_theta = optimize_placement_j_theta(
+        model=model, 
+        surrogate=surrogate, 
+        data_dict=data_dict, 
+        layer_to_attack=LAYER_TO_ATTACK,
+        head_idx=0,        # Change if targeting a different class head
+        num_iters=150,     # Adjust iterations as needed
+        lr=0.05,           # Learning rate for position updates
+        alpha=1.0,         # Weight for suppressing existing objects
+        beta=0.5           # Weight for hallucinating new objects
+    )
+
+    print(f"\nFinal Optimal Reflector Placement (Theta): {optimal_theta.cpu().numpy()}")
 
 
 if __name__ == '__main__':
