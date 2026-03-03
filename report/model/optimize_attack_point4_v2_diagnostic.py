@@ -118,7 +118,7 @@ def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack, hea
         H_0 = torch.sigmoid(clean_hm_logits).detach()
 
     # 3. Define the Spatial Masks (M_obj and M_bg)
-    TAU_OBJ = 0.3  # Threshold for existing objects
+    TAU_OBJ = 0.1  # Threshold for existing objects
     TAU_BG  = 0.05 # Threshold for background
     
     mask_obj = (H_0 > TAU_OBJ)
@@ -137,6 +137,11 @@ def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack, hea
         requires_grad=True
     )
     optimizer = optim.Adam([theta], lr=lr)
+
+    # --- ADD TRACKING LISTS HERE ---
+    theta_x_history = []
+    theta_y_history = []
+    loss_history = [] # <-- NEW: Tracking the loss
 
     # 5. Setup the Differentiable Pipeline (Hooks)
     tracked_hm = {}
@@ -188,20 +193,83 @@ def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack, hea
         loss = (alpha * loss_missing) - (beta * loss_new)
 
         loss.backward()
+
+        # --- THETA DIAGNOSTIC: print every step ---
+        grad_str = "None" if theta.grad is None else f"[{theta.grad[0,0].item():.6e}, {theta.grad[0,1].item():.6e}]"
+        print(f"  Step {step:03d} | "
+              f"theta=[{theta[0,0].item():+.6f}, {theta[0,1].item():+.6f}] | "
+              f"theta.grad={grad_str} | "
+              f"loss={loss.item():.6f} | "
+              f"missing={loss_missing.item():.6f} | "
+              f"new={loss_new.item():.6f}")
+
         optimizer.step()
 
-        # Logging
-        if step % 10 == 0 or step == num_iters - 1:
-            print(f"Iter {step:03d} | Total Loss: {loss.item():.4f} | "
-                  f"Missing Proxy: {loss_missing.item():.4f} | New Proxy: {loss_new.item():.4f} | "
-                  f"Theta: [{theta[0,0].item():.4f}, {theta[0,1].item():.4f}]")
+        # --- SAVE THETA AT EACH STEP ---
+        current_x = theta[0,0].item()
+        current_y = theta[0,1].item()
+        theta_x_history.append(current_x)
+        theta_y_history.append(current_y)
+        loss_history.append(loss.item()) # <-- NEW: Saving the loss
+
+        # === ADD THIS ===
+        with torch.no_grad():
+            theta.clamp_(-3.5, 3.5)
+        # ================
 
     # Cleanup
     for h in handles:
         h.remove()
 
     print("\nOptimization Complete.")
+
+    # --- PLOT THE RESULTS ---
+    plot_theta_trajectory(theta_x_history, theta_y_history, loss_history) # <-- UPDATED
     return theta.detach()
+
+# ---------------------------------------------------------
+# NEW 3-PANEL PLOTTING FUNCTION
+# ---------------------------------------------------------
+def plot_theta_trajectory(x_hist, y_hist, loss_hist):
+    import matplotlib.pyplot as plt
+    """Generates a 3-part plot showing loss, coordinate convergence, and 2D trajectory."""
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5)) # Changed to 3 subplots
+    epochs = range(len(x_hist))
+
+    # Plot 1: Loss Convergence (NEW)
+    axes[0].plot(epochs, loss_hist, color='black', linewidth=2)
+    axes[0].set_title('Loss Value over Time')
+    axes[0].set_xlabel('Optimization Step (Epoch)')
+    axes[0].set_ylabel('Loss (Lower is Better)')
+    axes[0].grid(True, linestyle=':', alpha=0.7)
+
+    # Plot 2: X and Y over Epochs
+    axes[1].plot(epochs, x_hist, label='Theta X', color='blue', linewidth=2)
+    axes[1].plot(epochs, y_hist, label='Theta Y', color='red', linewidth=2)
+    axes[1].set_title('Theta Coordinates over Time')
+    axes[1].set_xlabel('Optimization Step (Epoch)')
+    axes[1].set_ylabel('Physical Distance (Meters)')
+    axes[1].legend()
+    axes[1].grid(True, linestyle=':', alpha=0.7)
+
+    # Plot 3: 2D Spatial Trajectory (Bird's Eye View)
+    axes[2].plot(x_hist, y_hist, color='purple', linestyle='-', linewidth=1.5, alpha=0.6)
+    axes[2].scatter(x_hist[0], y_hist[0], color='green', marker='o', s=100, label='Start (0,0)')
+    axes[2].scatter(x_hist[-1], y_hist[-1], color='red', marker='*', s=200, label=f'End ({x_hist[-1]:.2f}, {y_hist[-1]:.2f})')
+    
+    axes[2].set_xlim(min(x_hist) - 0.5, max(x_hist) + 0.5)
+    axes[2].set_ylim(min(y_hist) - 0.5, max(y_hist) + 0.5)
+    
+    axes[2].set_title('2D Search Trajectory')
+    axes[2].set_xlabel('X Coordinate')
+    axes[2].set_ylabel('Y Coordinate')
+    axes[2].legend()
+    axes[2].grid(True, linestyle='--', alpha=0.5)
+
+    plt.tight_layout()
+    out_file = '/isaacsim_projects/AdversarialGhosting/report/model/theta_convergence_plot.png'
+    plt.savefig(out_file, dpi=150)
+    print(f"\n✅ Convergence plot saved to: {out_file}")
 
 
 # ---------------------------------------------------------
@@ -241,17 +309,16 @@ def main():
     surrogate.eval()
 
     # Execute Part C: Optimize Placement
-    # head_idx=0 usually corresponds to the first class in your YAML (e.g., 'car')
     optimal_theta = optimize_placement_j_theta(
         model=model, 
         surrogate=surrogate, 
         data_dict=data_dict, 
         layer_to_attack=LAYER_TO_ATTACK,
-        head_idx=0,        # Change if targeting a different class head
-        num_iters=150,     # Adjust iterations as needed
-        lr=0.05,           # Learning rate for position updates
-        alpha=1.0,         # Weight for suppressing existing objects
-        beta=0.5           # Weight for hallucinating new objects
+        head_idx=0,         # Change if targeting a different class head
+        num_iters=300,      # Adjust iterations as needed
+        lr=0.05,            # Learning rate for position updates
+        alpha=1.0,          # Weight for suppressing existing objects
+        beta=0.5            # Weight for hallucinating new objects
     )
 
     print(f"\nFinal Optimal Reflector Placement (Theta): {optimal_theta.cpu().numpy()}")

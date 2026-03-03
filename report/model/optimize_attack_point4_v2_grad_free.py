@@ -25,6 +25,7 @@ BETA  = 1.0
 
 # Bounds for theta (x, y) reflector placement
 THETA_BOUNDS = [(-3.5, 3.5), (-3.5, 3.5)]
+# THETA_BOUNDS = [(-10.0, 10.0), (-10.0, 10.0)]
 
 # Optimizer choice: 'de' for Differential Evolution, 'cma' for CMA-ES
 OPTIMIZER = 'cma'  # change to 'de' for differential evolution
