@@ -13,7 +13,7 @@ from pcdet.datasets import DatasetTemplate
 from pcdet.utils import common_utils
 
 # === CONFIGURATION ===
-SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/report/model/surrogate_model_F4.pth')
+SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/report/model/surrogate_model_F4_top1000.pth')
 CFG_FILE  = '/root/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext.yaml'
 CKPT_FILE = '/OpenPCDet/checkpoints/voxelnext.pth'
 OUTPUT_DIR = SURROGATE_PATH.parent

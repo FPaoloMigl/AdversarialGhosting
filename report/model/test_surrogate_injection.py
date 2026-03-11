@@ -12,17 +12,17 @@ from pcdet.datasets import DatasetTemplate
 from pcdet.utils import common_utils
 
 # === CONFIGURATION ===
-SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/report/model/surrogate_model_F4.pth')
+SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/report/model/surrogate_model_F8_top1000.pth')
 CFG_FILE  = '/root/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext.yaml'
 CKPT_FILE = '/OpenPCDet/checkpoints/voxelnext.pth'
-DATA_PATH = Path('/isaacsim_projects/paper/working_code_2026/dataset_out_xy/ply/sample_test.npy')
+DATA_PATH = Path('/isaacsim_projects/paper/working_code_2026/dataset_out_xy/ply/sample_bg.npy')
 
-LAYER_TO_ATTACK = 'backbone_3d.conv4'
-DELTA_SCALE = 10.0  # Must match what you used in the optimization!
+LAYER_TO_ATTACK = 'backbone_3d.shared_conv'
+DELTA_SCALE = 1.0  # Must match what you used in the optimization!
 
 # The specific coordinate you want to test
-TEST_X = 1.02
-TEST_Y = 15.89
+TEST_X = 2.74
+TEST_Y = 3.5
 
 # ---------------------------------------------------------
 # 1. SURROGATE MODEL
@@ -75,7 +75,7 @@ def print_detections(pred_dicts, class_names, title="Detections"):
     scores = pred_dicts[0]['pred_scores']
     labels = pred_dicts[0]['pred_labels']
     
-    mask = scores > 0.01
+    mask = scores > 0.28
     boxes, scores, labels = boxes[mask], scores[mask], labels[mask]
     
     if len(labels) == 0:

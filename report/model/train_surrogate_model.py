@@ -7,11 +7,12 @@ from pathlib import Path
 
 # --- CONFIGURATION ---
 # Input Data (Prepared in previous step)
-DATA_FILE = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/model/surrogate_training_data_F4.pt')
+DATA_FILE = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/model/surrogate_training_data_F8_top1000.pt')
 # Output Model File
-OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F4.pth'
+# OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F4.pth'
+OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F8_top1000.pth'
 # Output Loss Plot
-PLOT_FILE = DATA_FILE.parent / 'surrogate_training_loss.png'
+PLOT_FILE = DATA_FILE.parent / 'surrogate_training_loss_F8_top1000.png'
 
 # 1. Define the Model Architecture g_ell(theta)
 class SurrogateModel(nn.Module):
@@ -68,7 +69,7 @@ def train_and_save():
     optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
 
     # --- Training Loop ---
-    epochs = 3000
+    epochs = 500
     train_losses = []
     val_losses = []
 
@@ -96,7 +97,7 @@ def train_and_save():
             val_loss = criterion(val_pred, DeltaPhi_val)
             val_losses.append(val_loss.item())
             
-        if epoch % 500 == 0:
+        if epoch % 100 == 0:
             print(f"Epoch {epoch}: Train Loss = {loss.item():.6f} | Val Loss = {val_loss.item():.6f}")
 
     # --- SAVE THE MODEL ---

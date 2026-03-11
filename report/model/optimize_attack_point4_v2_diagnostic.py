@@ -12,7 +12,7 @@ from pcdet.datasets import DatasetTemplate
 from pcdet.utils import common_utils
 
 # === CONFIGURATION ===
-SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/report/model/surrogate_model_F4.pth')
+SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/report/model/surrogate_model_F4_top1000.pth')
 CFG_FILE  = '/root/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext.yaml'
 CKPT_FILE = '/OpenPCDet/checkpoints/voxelnext.pth'
 
@@ -133,7 +133,7 @@ def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack, hea
 
     # 4. Initialize Theta (x, y placement)
     theta = nn.Parameter(
-        torch.tensor([[0.0, 0.0]], dtype=torch.float32, device='cuda'),
+        torch.tensor([[-1.1, -0.4]], dtype=torch.float32, device='cuda'),
         requires_grad=True
     )
     optimizer = optim.Adam([theta], lr=lr)
@@ -163,7 +163,8 @@ def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack, hea
     def injection_hook(module, inp, output):
         delta_phi = surrogate(theta)                                   
         delta = delta_phi.expand(output.features.shape[0], -1)         
-        new_output = output.replace_feature(output.features + DELTA_SCALE*delta)
+        # new_output = output.replace_feature(output.features + DELTA_SCALE*delta)
+        new_output = output.replace_feature(output.features + delta)
         return new_output
     
     handles.append(modules_dict[layer_to_attack].register_forward_hook(injection_hook))
@@ -180,7 +181,7 @@ def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack, hea
         # Forward Pass through differentiable pipeline
         _ = model(data_dict)
         
-        # Get \hat{H}_\theta
+        # Get \hat{H}_\theta (yhat(theta))
         H_adv = torch.sigmoid(tracked_hm['adv_hm'])
 
         # Calculate Differentiable Proxies
@@ -228,8 +229,8 @@ def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack, hea
         # === ADD THIS ===
         # Y range is [-37.99, 39.85], X range is [-57.64, 45.68]
         with torch.no_grad():
-            theta[0, 0].clamp_(-57.0, 45.0)  # X
-            theta[0, 1].clamp_(-37.0, 39.0)  # Y
+            theta[0, 0].clamp_(-3.5, 3.5)  # X
+            theta[0, 1].clamp_(-3.5, 3.5)  # Y
         # ================
 
     # Cleanup
@@ -335,7 +336,7 @@ def main():
             return fn
         handles = []
         for name, module in model.named_modules():
-            if name in ['backbone_3d.conv3', 'backbone_3d.conv4']:
+            if name in ['backbone_3d.conv4', 'backbone_3d.shared_conv']:
                 handles.append(module.register_forward_hook(hook(name)))
         
         model.eval()  # ← THIS IS MISSING IN YOUR VERSION
@@ -370,10 +371,10 @@ def main():
         data_dict=data_dict, 
         layer_to_attack=LAYER_TO_ATTACK,
         head_idx=0,         # Change if targeting a different class head
-        num_iters=1500,      # Adjust iterations as needed
-        lr=0.05,            # Learning rate for position updates
-        alpha=1.0,          # Weight for suppressing existing objects
-        beta=2.0            # Weight for hallucinating new objects
+        num_iters=500,      # Adjust iterations as needed
+        lr=0.1,            # Learning rate for position updates
+        alpha=10.0,         # Weight for suppressing existing objects
+        beta=5.0            # Weight for hallucinating new objects
     )
 
     print(f"\nFinal Optimal Reflector Placement (Theta): {optimal_theta.cpu().numpy()}")

@@ -324,7 +324,7 @@ mirror = VisualCuboid(
     name="mirror_wall",
     position=np.array([5.0, 7.0, 1.0]), 
     # scale=np.array([0.1, 4.0, 5.0]), 
-    scale=np.array([0.1, 6.0, 5.0])
+    scale=np.array([0.1, 1.0, 3.0])
 )
 
 # Apply the Mirror Material

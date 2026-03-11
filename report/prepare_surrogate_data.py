@@ -13,9 +13,9 @@ DATA_DIR = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_
 RAW_DATA_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/isaacsim/test/dataset_out_xy')
 # Where to save the processed training data
 OUTPUT_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/model')
-OUTPUT_FILE = OUTPUT_DIR / 'surrogate_training_data_F4.pt'
+OUTPUT_FILE = OUTPUT_DIR / 'surrogate_training_data_F8_top1000.pt'
 # The specific layer we are targeting
-LAYER_NAME = 'F4' 
+LAYER_NAME = 'F8' 
 
 def get_theta_from_pkl(scene_id):
     """
@@ -115,10 +115,25 @@ def prepare_data():
             # Delta = Perturbed - Baseline
             diffs = vec_pt - vec_bg
             
-            # AGGREGATE: Mean Difference Vector
-            # We condense the whole scene into one "average perturbation vector"
-            # Shape: (Channels,) e.g., (128,)
-            mean_delta = np.mean(diffs, axis=0)
+            # --- THE "IMPACT ZONE" FIX ---
+            # 1. Calculate how hard each voxel was hit by the attack (L2 Norm)
+            magnitudes = np.linalg.norm(diffs, axis=1)
+            
+            # 2. Find the top 1000 voxels that experienced the most drastic change
+            # (If the scene has fewer than 1000 shared voxels, just take them all)
+            k = min(1000, len(magnitudes))
+            top_k_indices = np.argpartition(magnitudes, -k)[-k:]
+
+            # === ADD THIS ===
+            print(f"Scene {scene_id:04d} | "
+                  f"Top 10 magnitudes: {np.sort(magnitudes)[-10:]}, "
+                  f"Mag at rank {k}: {np.sort(magnitudes)[-k]:.4f}, "
+                  f"Median: {np.median(magnitudes):.4f}")
+            # ================
+            
+            # 3. Average ONLY the pure adversarial signal from those disrupted voxels
+            mean_delta = np.mean(diffs[top_k_indices], axis=0)
+            # -----------------------------
 
             dataset_X.append(theta)
             dataset_Y.append(mean_delta)

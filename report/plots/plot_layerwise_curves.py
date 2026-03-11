@@ -5,9 +5,9 @@ from pathlib import Path
 
 # --- CONFIGURATION ---
 # Path to the CSV you just generated
-CSV_PATH = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/adversarial_analysis_results.csv')
+CSV_PATH = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/adversarial_analysis_results_top_k.csv')
 OUTPUT_PATH = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/plots_output')
-OUTPUT_PLOT = OUTPUT_PATH / 'layerwise_sensitivity.png'
+OUTPUT_PLOT = OUTPUT_PATH / 'layerwise_sensitivity_top_k.png'
 
 def plot_layerwise_metrics():
     if not OUTPUT_PATH.exists():
@@ -23,7 +23,7 @@ def plot_layerwise_metrics():
     print(f"Loaded {len(df)} scenes.")
 
     # 2. Define Layers and Metric Columns
-    layers = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'conv_out', 'shared_conv']
+    layers = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8']
     # Create readable labels for the X-axis
     layer_labels = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'BEV_Out', 'Shared']
 
