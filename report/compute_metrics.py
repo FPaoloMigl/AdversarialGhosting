@@ -8,8 +8,8 @@ import pandas as pd # Use pandas for easy CSV saving
 
 # --- CONFIGURATION ---
 IOU_THRESH = 0.1  # Threshold to define 'existence' or 'match'
-RECORD_DIR = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/recorded_features')
-OUTPUT_CSV = 'adversarial_analysis_results.csv'
+RECORD_DIR = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/recorded_features/v2')
+OUTPUT_CSV = '/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/v2/adversarial_analysis_results.csv'
 
 # ==========================================
 # PART 1: GEOMETRIC UTILS (IoU & Box Matching)
@@ -218,7 +218,7 @@ def main():
 
     # 4. Save Final Report
     df = pd.DataFrame(results)
-    save_path = RECORD_DIR.parent / OUTPUT_CSV
+    save_path = OUTPUT_CSV
     df.to_csv(save_path, index=False)
 
     print("\n" + "="*50)
