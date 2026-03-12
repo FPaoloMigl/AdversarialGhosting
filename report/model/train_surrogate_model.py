@@ -7,31 +7,31 @@ from pathlib import Path
 
 # --- CONFIGURATION ---
 # Input Data (Prepared in previous step)
-DATA_FILE = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/model/surrogate_training_data_F8_top1000.pt')
+DATA_FILE = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/model/surrogate_training_data_F6_v2.pt')
 # Output Model File
 # OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F4.pth'
-OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F8_top1000.pth'
+OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F6_v2.pth'
 # Output Loss Plot
-PLOT_FILE = DATA_FILE.parent / 'surrogate_training_loss_F8_top1000.png'
+PLOT_FILE = DATA_FILE.parent / 'surrogate_training_loss_F6_v2.png'
 
 # 1. Define the Model Architecture g_ell(theta)
 class SurrogateModel(nn.Module):
-    def __init__(self, input_dim=2, output_dim=128):
+    def __init__(self, input_dim=3, output_dim=128):
         super(SurrogateModel, self).__init__()
         # We use an "Enhanced MLP" for better regression accuracy
         self.net = nn.Sequential(
             # Layer 1: Input (x,y) -> High dim feature space
-            nn.Linear(input_dim, 256),
-            nn.BatchNorm1d(256), # Stabilizes training
+            nn.Linear(input_dim, 32),
+            nn.BatchNorm1d(32), # Stabilizes training
             nn.GELU(),           # Smooth activation (better for regression than ReLU)
             
             # Layer 2: Deep processing
-            nn.Linear(256, 256),
-            nn.BatchNorm1d(256),
+            nn.Linear(32, 128),
+            nn.BatchNorm1d(128),
             nn.GELU(),
             
             # Layer 3: Output the Feature Vector Delta Phi
-            nn.Linear(256, output_dim) 
+            nn.Linear(128, output_dim) 
         )
         
     def forward(self, theta):
@@ -62,7 +62,12 @@ def train_and_save():
     print(f"Training on {n_train} samples, Validating on {N - n_train} samples.")
 
     # --- Setup Model & Optimization ---
-    model = SurrogateModel(input_dim=2, output_dim=128)
+    # FIX: Dynamically read dimensions directly from the tensors!
+    actual_input_dim = Theta.shape[1]      # Will be 3 (X, Y, Angle)
+    actual_output_dim = DeltaPhi.shape[1]  # The feature vector size for this specific layer
+
+    print(f"Initializing Surrogate Model: Input={actual_input_dim}, Output={actual_output_dim}")
+    model = SurrogateModel(input_dim=actual_input_dim, output_dim=actual_output_dim)
     
     # Regression Loss: L = Sum || g(theta) - DeltaPhi ||^2
     criterion = nn.MSELoss() 

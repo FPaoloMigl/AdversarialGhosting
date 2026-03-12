@@ -8,14 +8,14 @@ import pickle
 
 # --- CONFIGURATION ---
 # Folder containing your .pth files
-DATA_DIR = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/recorded_features')
+DATA_DIR = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/recorded_features/v2')
 # 2. Path to Simulation Metadata (.pkl files) - Contains the Theta (x, y)
-RAW_DATA_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/isaacsim/test/dataset_out_xy')
+RAW_DATA_DIR = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/dataset_out_xy/v2')
 # Where to save the processed training data
 OUTPUT_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/model')
-OUTPUT_FILE = OUTPUT_DIR / 'surrogate_training_data_F8_top1000.pt'
+OUTPUT_FILE = OUTPUT_DIR / 'surrogate_training_data_F6_v2.pt'
 # The specific layer we are targeting
-LAYER_NAME = 'F8' 
+LAYER_NAME = 'F6' 
 
 def get_theta_from_pkl(scene_id):
     """
@@ -35,7 +35,10 @@ def get_theta_from_pkl(scene_id):
         # Extract X and Y (The physical parameters of the attack)
         # data['object_position'] is [x, y, z]
         pos = data['object_position']
-        return np.array([pos[0], pos[1]], dtype=np.float32)
+
+        angle = data.get('object_z_rotating_deg', 0.0)
+
+        return np.array([pos[0], pos[1], angle], dtype=np.float32)
     except Exception as e:
         print(f"Error reading pickle {pkl_path}: {e}")
         return None
@@ -117,22 +120,22 @@ def prepare_data():
             
             # --- THE "IMPACT ZONE" FIX ---
             # 1. Calculate how hard each voxel was hit by the attack (L2 Norm)
-            magnitudes = np.linalg.norm(diffs, axis=1)
+            # magnitudes = np.linalg.norm(diffs, axis=1)
             
             # 2. Find the top 1000 voxels that experienced the most drastic change
             # (If the scene has fewer than 1000 shared voxels, just take them all)
-            k = min(1000, len(magnitudes))
-            top_k_indices = np.argpartition(magnitudes, -k)[-k:]
+            # k = min(1000, len(magnitudes))
+            # top_k_indices = np.argpartition(magnitudes, -k)[-k:]
 
-            # === ADD THIS ===
-            print(f"Scene {scene_id:04d} | "
-                  f"Top 10 magnitudes: {np.sort(magnitudes)[-10:]}, "
-                  f"Mag at rank {k}: {np.sort(magnitudes)[-k]:.4f}, "
-                  f"Median: {np.median(magnitudes):.4f}")
-            # ================
+            # # === ADD THIS ===
+            # print(f"Scene {scene_id:04d} | "
+            #       f"Top 10 magnitudes: {np.sort(magnitudes)[-10:]}, "
+            #       f"Mag at rank {k}: {np.sort(magnitudes)[-k]:.4f}, "
+            #       f"Median: {np.median(magnitudes):.4f}")
+            # # ================
             
             # 3. Average ONLY the pure adversarial signal from those disrupted voxels
-            mean_delta = np.mean(diffs[top_k_indices], axis=0)
+            mean_delta = np.mean(diffs, axis=0)
             # -----------------------------
 
             dataset_X.append(theta)
@@ -149,11 +152,27 @@ def prepare_data():
         # Y shape: (N, C) -> [[delta1...], [delta2...], ...]
         Y_tensor = torch.tensor(np.array(dataset_Y), dtype=torch.float32)
 
+        # --- NORMALIZATION BLOCK ---
+        # Define the bounds based on your data collection script
+        # X_RANGE = [-30, 30], Y_RANGE = [-30, 30], Z_ROT_RANGE = [0, 180]
+        bounds_min = torch.tensor([-30.0, -30.0, 0.0], dtype=torch.float32)
+        bounds_max = torch.tensor([30.0, 30.0, 180.0], dtype=torch.float32)
+
+        # Min-Max Scaling to [0, 1]
+        X_norm = (X_tensor - bounds_min) / (bounds_max - bounds_min)
+
+        # Scale to [-1, 1] (Standard practice for neural network inputs)
+        X_norm = X_norm * 2.0 - 1.0
+
         save_dict = {
             'X': X_tensor, 
             'Y': Y_tensor, 
             'layer': LAYER_NAME,
-            'description': 'X is (x,y) position, Y is Mean Delta Phi Vector'
+            'description': 'X is (x, y, z_rot) normalized to [-1, 1]. Y is Mean Delta Phi Vector',        
+
+            # CRITICAL: Save the bounds so you can reverse this later!
+            'x_bounds_min': bounds_min,
+            'x_bounds_max': bounds_max    
         }
 
         # Create the folder if it doesn't exist
