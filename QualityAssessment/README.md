@@ -31,3 +31,5 @@
     2.  Choose the surrogate architecture
     3.  Train the surrogate model using `train_surrogate_model.py`
         1.  `output: .png file, pth file`
+    4.  Run optimization
+        1.  \`output: theta\_convergence\_plot\_v2.png file \`
