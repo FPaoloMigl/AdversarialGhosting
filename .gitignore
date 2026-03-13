@@ -1,3 +1,4 @@
 *.npy
 *.pkl
 *.ply
+*.pth
