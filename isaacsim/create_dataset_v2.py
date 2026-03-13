@@ -14,10 +14,12 @@ NUM_SAMPLES = 1000
 # Randomization
 X_RANGE = (-30.0, 30) 
 Y_RANGE = (-30.0, 30.0)
-Z_ROT_RANGE = (0, 180) # Degrees for Z-axis rotation
+# Z_ROT_RANGE = (0, 180) # Degrees for Z-axis rotation
 
-OUTPUT_DIR = "/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/dataset_out_xy/v2/demo"
-OUTPUT_DIR_PLY = "/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/dataset_out_xy/v2/demo/ply/"
+# OUTPUT_DIR = "/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/dataset_out_xy/v2/demo"
+OUTPUT_DIR = "/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/isaacsim/data/step1"
+# OUTPUT_DIR_PLY = "/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/dataset_out_xy/v2/demo/ply/"
+OUTPUT_DIR_PLY = "/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/isaacsim/data/step1/ply"
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
@@ -318,18 +320,19 @@ for i in range(NUM_SAMPLES):
     pos = np.array([rand_x, rand_y, WALL_HEIGHT / 2.0])
     
     # 2. Randomize Z-Rotation (Yaw)
-    rand_z_angle = random.uniform(Z_ROT_RANGE[0], Z_ROT_RANGE[1])
-    z_rot_radians = math.radians(rand_z_angle)
+    # rand_z_angle = random.uniform(Z_ROT_RANGE[0], Z_ROT_RANGE[1])
+    # z_rot_radians = math.radians(rand_z_angle)
     
     # Apply purely Z-axis rotation
-    rot_quat = transform_utils.euler_angles_to_quaternion(np.array([0.0, 0.0, z_rot_radians]))
+    # rot_quat = transform_utils.euler_angles_to_quaternion(np.array([z_rot_radians, 0.0, 0.0]))
 
-    if hasattr(rot_quat, "numpy"):
-        rot_quat = rot_quat.numpy()
-    else:
-        rot_quat = np.array(rot_quat)
+    # if hasattr(rot_quat, "numpy"):
+        # rot_quat = rot_quat.numpy()
+    # else:
+        # rot_quat = np.array(rot_quat)
 
-    mirror.set_world_pose(position=pos, orientation=rot_quat)
+    # mirror.set_world_pose(position=pos, orientation=rot_quat)
+    mirror.set_world_pose(position=pos)
     
     # 3. Flush & Scan
     world.step(render=True)
@@ -345,7 +348,7 @@ for i in range(NUM_SAMPLES):
         sample_data = {
             "id": i,
             "object_position": pos,
-            "object_z_rotation_deg": rand_z_angle,  # Saving the rotation angle might be useful!
+            # "object_z_rotation_deg": rand_z_angle,  # Saving the rotation angle might be useful!
             # "points": diff_points,      
             "full_scan": current_points, 
             "intensity": current_intensity
@@ -359,7 +362,7 @@ for i in range(NUM_SAMPLES):
         save_to_ply(current_points, current_intensity, ply_path)
 
         if i % 6 == 0:
-            print(f"Sample {i}/{NUM_SAMPLES} | Pos: ({rand_x:.2f}, {rand_y:.2f}) | Rot: {rand_z_angle:.1f}°")
+            print(f"Sample {i}/{NUM_SAMPLES} | Pos: ({rand_x:.2f}, {rand_y:.2f})")
     else:
         if i % 10 == 0:
              print(f"Sample {i}/{NUM_SAMPLES} | ⚠️ Mirror Missed (0 diff points)")
