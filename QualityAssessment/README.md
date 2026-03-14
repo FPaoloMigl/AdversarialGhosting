@@ -32,4 +32,5 @@
     3.  Train the surrogate model using `train_surrogate_model.py`
         1.  `output: .png file, pth file`
     4.  Run optimization
-        1.  \`output: theta\_convergence\_plot\_v2.png file\`
+        1.  `output: theta_convergence_plot_v2.png file`
+7.  validate the result using \`compare\_surrogate\_vs\_physical.py\`

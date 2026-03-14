@@ -14,13 +14,13 @@ CFG_FILE  = '/root/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext
 CKPT_FILE = '/OpenPCDet/checkpoints/voxelnext.pth'
 
 # The physical point clouds from Isaac Sim
-CLEAN_PC_PATH = Path('/isaacsim_projects/paper/working_code_2026/dataset_out_xy/ply/sample_bg.npy')
-ADV_PC_PATH   = Path('/isaacsim_projects/paper/working_code_2026/dataset_out_xy/ply/sample_test_7.npy') # Make sure this is the [2.94, -1.33] physical scan
+CLEAN_PC_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/isaacsim/data/ply/sample_bg.npy')
+ADV_PC_PATH   = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/theta_optimization/sample_test_step1.npy') # Make sure this is the [2.94, -1.33] physical scan
 
 # Surrogate Model Details
-SURROGATE_WEIGHTS = '/isaacsim_projects/AdversarialGhosting/report/model/surrogate_model_F4_top1000.pth'
-LAYER_TO_ATTACK   = 'backbone_3d.conv4'  # Update if you switched to shared_conv
-THETA_STAR        = [-1.35, 2.72]        # The optimized coordinate
+SURROGATE_WEIGHTS = '/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/model/surrogate_model_F6_v2.pth'
+LAYER_TO_ATTACK   = 'backbone_3d.conv6'  # Update if you switched to shared_conv
+THETA_STAR        = [-4.38, 21.39]        # The optimized coordinate
 DELTA_SCALE       = 1.0                  # Adjust if you need to scale the attack magnitude
 SCORE_THRESH      = 0.28                 # Confidence threshold for printing
 
