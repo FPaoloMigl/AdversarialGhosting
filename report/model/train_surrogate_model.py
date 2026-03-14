@@ -4,10 +4,11 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
+from torch.utils.data import TensorDataset, DataLoader
 
 # --- CONFIGURATION ---
 # Input Data (Prepared in previous step)
-DATA_FILE = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/model/surrogate_training_data_F6_v2.pt')
+DATA_FILE = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/model/surrogate_training_data_F6_v2.pt')
 # Output Model File
 # OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F4.pth'
 OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F6_v2.pth'
@@ -16,7 +17,7 @@ PLOT_FILE = DATA_FILE.parent / 'surrogate_training_loss_F6_v2.png'
 
 # 1. Define the Model Architecture g_ell(theta)
 class SurrogateModel(nn.Module):
-    def __init__(self, input_dim=3, output_dim=128):
+    def __init__(self, input_dim=2, output_dim=128):
         super(SurrogateModel, self).__init__()
         # We use an "Enhanced MLP" for better regression accuracy
         self.net = nn.Sequential(
@@ -41,6 +42,11 @@ def train_and_save():
     if not DATA_FILE.exists():
         print(f"Error: Data file not found at {DATA_FILE}")
         return
+    
+    # --- Hardware Device ---
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
+    print(f"Using device: {device}")
 
     # --- Load Dataset D ---
     print(f"Loading data from {DATA_FILE.name}...")
@@ -61,39 +67,60 @@ def train_and_save():
 
     print(f"Training on {n_train} samples, Validating on {N - n_train} samples.")
 
+    # --- Setup DataLoader for Mini-Batching ---
+    batch_size = 64
+    train_dataset = TensorDataset(Theta_train, DeltaPhi_train)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
     # --- Setup Model & Optimization ---
     # FIX: Dynamically read dimensions directly from the tensors!
     actual_input_dim = Theta.shape[1]      # Will be 3 (X, Y, Angle)
     actual_output_dim = DeltaPhi.shape[1]  # The feature vector size for this specific layer
 
     print(f"Initializing Surrogate Model: Input={actual_input_dim}, Output={actual_output_dim}")
-    model = SurrogateModel(input_dim=actual_input_dim, output_dim=actual_output_dim)
+    model = SurrogateModel(input_dim=actual_input_dim, output_dim=actual_output_dim).to(device)
     
     # Regression Loss: L = Sum || g(theta) - DeltaPhi ||^2
     criterion = nn.MSELoss() 
     optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+    
+    # ADD THIS: Shrinks LR by half if validation loss doesn't improve for 100 epochs
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=100)
+
 
     # --- Training Loop ---
-    epochs = 500
+    epochs = 2000
     train_losses = []
     val_losses = []
+
+    # FIX: Send the validation data to the device BEFORE the loop starts
+    Theta_val = Theta_val.to(device)
+    DeltaPhi_val = DeltaPhi_val.to(device)
 
     print("Starting Training...")
     for epoch in range(epochs):
         model.train()
-        optimizer.zero_grad()
+        epoch_loss = 0.0
+
+        # Mini-Batch Iteration
+        for batch_theta, batch_delta in train_loader:
+            batch_theta = batch_theta.to(device)
+            batch_delta = batch_delta.to(device)
+            optimizer.zero_grad()
+
+            # 1. Forward Pass
+            prediction = model(batch_theta)
+            # 2. Compute Loss
+            loss = criterion(prediction, batch_delta)
         
-        # 1. Forward Pass
-        prediction = model(Theta_train)
+            # 3. Backward Pass
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item() * batch_theta.size(0)
         
-        # 2. Compute Loss
-        loss = criterion(prediction, DeltaPhi_train)
-        
-        # 3. Backward Pass
-        loss.backward()
-        optimizer.step()
-        
-        train_losses.append(loss.item())
+        avg_train_loss = epoch_loss / n_train
+        train_losses.append(avg_train_loss)
 
         # Validation (Check generalization)
         model.eval()
@@ -101,9 +128,11 @@ def train_and_save():
             val_pred = model(Theta_val)
             val_loss = criterion(val_pred, DeltaPhi_val)
             val_losses.append(val_loss.item())
+
+        scheduler.step(val_loss)
             
         if epoch % 100 == 0:
-            print(f"Epoch {epoch}: Train Loss = {loss.item():.6f} | Val Loss = {val_loss.item():.6f}")
+            print(f"Epoch {epoch}: Train Loss = {avg_train_loss:.6f} | Val Loss = {val_loss.item():.6f}")
 
     # --- SAVE THE MODEL ---
     torch.save(model.state_dict(), OUTPUT_MODEL)

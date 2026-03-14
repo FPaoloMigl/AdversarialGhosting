@@ -239,6 +239,16 @@ annotator.initialize(
 annotator.attach([render_product_path])
 
 # --- HELPER FUNCTIONS ---
+
+def get_look_at_quaternion(object_pos, target_pos):
+    """Calculates rotation so the mirror face always points to the Lidar."""
+    direction = target_pos - object_pos
+    angle_z = np.arctan2(direction[1], direction[0])
+    cy = np.cos(angle_z * 0.5)
+    sy = np.sin(angle_z * 0.5)
+    return np.array([cy, 0, 0, sy])
+
+
 def save_to_ply(points, intensity, filename="lidar_output.ply"):
     folder_path = os.path.dirname(filename)
     if folder_path and not os.path.exists(folder_path):
@@ -309,6 +319,7 @@ save_to_ply(bg_points, _, ply_path_background)
 print(f"Background captured. Starting Collection of {NUM_SAMPLES} Samples...")
 
 print(f"--- Step 2: Starting Collection of {NUM_SAMPLES} Samples ---")
+lidar_pos = np.array([2.0, 5.0, 1.73])
 
 for i in range(NUM_SAMPLES):
     
@@ -331,8 +342,12 @@ for i in range(NUM_SAMPLES):
     # else:
         # rot_quat = np.array(rot_quat)
 
+    # 1. Rotate & Move
+    rot_quat = get_look_at_quaternion(pos, lidar_pos)
+    mirror.set_world_pose(position=pos, orientation=rot_quat)
+
     # mirror.set_world_pose(position=pos, orientation=rot_quat)
-    mirror.set_world_pose(position=pos)
+    # mirror.set_world_pose(position=pos)
     
     # 3. Flush & Scan
     world.step(render=True)
