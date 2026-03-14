@@ -8,8 +8,12 @@ import pandas as pd # Use pandas for easy CSV saving
 
 # --- CONFIGURATION ---
 IOU_THRESH = 0.1  # Threshold to define 'existence' or 'match'
-RECORD_DIR = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/recorded_features/v2')
-OUTPUT_CSV = '/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/v2/adversarial_analysis_results.csv'
+RECORD_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/isaacsim/data/step1/v2')
+OUTPUT_DIR = '/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/isaacsim/data/step1/metrics'
+
+if not os.path.exists(OUTPUT_DIR):
+    os.makedirs(OUTPUT_DIR)
+
 
 # ==========================================
 # PART 1: GEOMETRIC UTILS (IoU & Box Matching)
@@ -150,7 +154,8 @@ def main():
         print(f"CRITICAL ERROR: Baseline file not found at {baseline_path}")
         return
     
-    print(f"Loading Baseline: {baseline_path.name}...")
+    
+    print(f"Loading Baseline: {baseline_path.name}... | {baseline_path}")
     clean_data = torch.load(baseline_path, weights_only=False) # Fix for torch 2.6
 
     # Move baseline data to Numpy/CPU once to save time
@@ -218,7 +223,7 @@ def main():
 
     # 4. Save Final Report
     df = pd.DataFrame(results)
-    save_path = OUTPUT_CSV
+    save_path = os.path.join(OUTPUT_DIR, "adversarial_analysis_results.csv") 
     df.to_csv(save_path, index=False)
 
     print("\n" + "="*50)
