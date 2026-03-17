@@ -8,8 +8,8 @@ import pandas as pd # Use pandas for easy CSV saving
 
 # --- CONFIGURATION ---
 IOU_THRESH = 0.1  # Threshold to define 'existence' or 'match'
-RECORD_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/isaacsim/data/step1/v2')
-OUTPUT_DIR = '/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/isaacsim/data/step1/metrics'
+RECORD_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/heatmap_v2_debug/dataset_using_heatmap/feature_extraction')
+OUTPUT_DIR = '/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/heatmap_v2_debug/dataset_using_heatmap/metrics'
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
@@ -98,21 +98,21 @@ def compute_detection_metrics(c_boxes, c_scores, p_boxes, p_scores):
 # ==========================================
 # PART 2: NEURAL UTILS (Alignment & Distance)
 # ==========================================
-def compute_layer_metrics(bg_data, pert_data, layer_name):
+def compute_layer_metrics(bg_map, pert_data, layer_name):
     """
     Aligns sparse voxels and computes MSE & Cosine Distance.
     Handles shape mismatch (e.g., 137k vs 132k).
     """
     # 1. Extract Indices (coordinates) and Features
     # Convert to CPU numpy for processing
-    bg_idx = bg_data['indices']
-    bg_feat = bg_data['features']
+    # bg_idx = bg_data['indices']
+    # bg_feat = bg_data['features']
     pt_idx = pert_data['indices']
     pt_feat = pert_data['features']
 
     # 2. Map Coordinates to Features
     # Key: tuple(z, y, x) or tuple(y, x). We skip col 0 (batch_idx).
-    bg_map = {tuple(idx[1:]): feat for idx, feat in zip(bg_idx, bg_feat)}
+    # bg_map = {tuple(idx[1:]): feat for idx, feat in zip(bg_idx, bg_feat)}
     pt_map = {tuple(idx[1:]): feat for idx, feat in zip(pt_idx, pt_feat)}
 
     # 3. Find Shared Voxels (Intersection)
@@ -170,6 +170,13 @@ def main():
             'features': layer_val['features']
         }
 
+    clean_layers_maps = {}
+    for layer_key, layer_val in clean_layers_cpu.items():
+        clean_layers_maps[layer_key] = {
+            tuple(idx[1:]): feat 
+            for idx, feat in zip(layer_val['indices'], layer_val['features'])
+    }
+
     # 2. Find Perturbed Files
     files = sorted([f for f in glob.glob(str(RECORD_DIR / "recorded_*.pth")) if 'sample_bg' not in f])
     print(f"Found {len(files)} adversarial scenes to analyze.")
@@ -202,7 +209,7 @@ def main():
                     }
 
                     mse, cos = compute_layer_metrics(
-                        clean_layers_cpu[layer_name], 
+                        clean_layers_maps[layer_name], 
                         pert_layer, 
                         layer_name
                     )

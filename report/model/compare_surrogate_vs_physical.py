@@ -14,19 +14,20 @@ CFG_FILE  = '/root/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext
 CKPT_FILE = '/OpenPCDet/checkpoints/voxelnext.pth'
 
 # The physical point clouds from Isaac Sim
-CLEAN_PC_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/isaacsim/data/ply/sample_bg.npy')
-ADV_PC_PATH   = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/theta_optimization/sample_test_step1.npy') # Make sure this is the [2.94, -1.33] physical scan
+CLEAN_PC_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/isaacsim/data/ply/sample_bg.npy')
+ADV_PC_PATH   = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/optimization/sample_test.npy') # Make sure this is the [2.94, -1.33] physical scan
+DATA_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/model/surrogate_training_data_F6_v2.pt')
 
 # Surrogate Model Details
-SURROGATE_WEIGHTS = '/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/model/surrogate_model_F6_v2.pth'
+SURROGATE_WEIGHTS = '/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/model/surrogate_model_F6_v2.pth'
 LAYER_TO_ATTACK   = 'backbone_3d.conv6'  # Update if you switched to shared_conv
-THETA_STAR        = [-4.38, 21.39]        # The optimized coordinate
+THETA_STAR        = [-4.58, 7.95, 118.0]        # The optimized coordinate
 DELTA_SCALE       = 1.0                  # Adjust if you need to scale the attack magnitude
 SCORE_THRESH      = 0.28                 # Confidence threshold for printing
 
 # === 2. SURROGATE MODEL DEFINITION ===
 class MLP_Surrogate(nn.Module):
-    def __init__(self, input_dim=2, output_dim=128, hidden_dim=128):
+    def __init__(self, input_dim=3, output_dim=128, hidden_dim=128):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 32),
@@ -111,11 +112,11 @@ def main():
     model.cuda().eval()
     
     # Fix the shared indice key bug for sequential runs
-    # for i, head in enumerate(model.dense_head.heads_list):
-    #     for cur_name in head.sep_head_dict:
-    #         for module in head.__getattr__(cur_name).modules():
-    #             if hasattr(module, 'indice_key') and module.indice_key is not None:
-    #                 module.indice_key = f"{module.indice_key}_head{i}"
+    for i, head in enumerate(model.dense_head.heads_list):
+        for cur_name in head.sep_head_dict:
+            for module in head.__getattr__(cur_name).modules():
+                if hasattr(module, 'indice_key') and module.indice_key is not None:
+                    module.indice_key = f"{module.indice_key}_head{i}"
 
     # --- RUN 1: CLEAN BASELINE (y_0) ---
     clean_preds = run_inference(model, CLEAN_PC_PATH, logger)
@@ -131,9 +132,21 @@ def main():
     surrogate.load_state_dict(torch.load(SURROGATE_WEIGHTS))
     surrogate.eval()
     
-    theta_tensor = torch.tensor([THETA_STAR], dtype=torch.float32, device='cuda')
+    # Extract the bounds
+    data = torch.load(DATA_PATH, weights_only=False)
+    x_bounds_min = data['x_bounds_min'].to('cuda')
+    x_bounds_max = data['x_bounds_max'].to('cuda')
+
+    theta_t = torch.tensor(THETA_STAR, dtype=torch.float32, device='cuda')
+
+    theta_norm = (theta_t - x_bounds_min) / (x_bounds_max - x_bounds_min)
+    theta_norm = theta_norm * 2.0 - 1.0
+
+    theta_norm = theta_norm.unsqueeze(0)
+
+    # theta_tensor = torch.tensor([theta_norm], dtype=torch.float32, device='cuda')
     with torch.no_grad():
-        delta_phi = surrogate(theta_tensor)
+        delta_phi = surrogate(theta_norm)
         
     print(f"Delta Phi Norm: {torch.norm(delta_phi).item():.4f}")
 

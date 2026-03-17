@@ -4,6 +4,7 @@ import torch.optim as optim
 import numpy as np
 from pathlib import Path
 import glob
+import matplotlib.pyplot as plt
 
 # --- IMPORT PCDET ---
 from pcdet.config import cfg, cfg_from_yaml_file
@@ -12,23 +13,25 @@ from pcdet.datasets import DatasetTemplate
 from pcdet.utils import common_utils
 
 # === CONFIGURATION ===
-SURROGATE_DATA_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/model/surrogate_training_data_F6_v2.pt')
-SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/model/surrogate_model_F6_v2.pth')
+SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/model/surrogate_model_F6_v2.pth')
 CFG_FILE  = '/root/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext.yaml'
 CKPT_FILE = '/OpenPCDet/checkpoints/voxelnext.pth'
-
 LAYER_TO_ATTACK = 'backbone_3d.conv6'
 
+# === FIX 1: Per-dimension physical bounds (matching training normalization) ===
+BOUNDS_MIN = torch.tensor([-30.0, -30.0, 0.0], device='cuda')
+BOUNDS_MAX = torch.tensor([30.0,  30.0, 360.0], device='cuda')
+
 
 # ---------------------------------------------------------
-# 1. SURROGATE MODEL
+# 1. SURROGATE MODEL (FIX 2: matches Training_model exactly — BatchNorm, not Dropout)
 # ---------------------------------------------------------
 class SurrogateModel(nn.Module):
-    def __init__(self, input_dim=2, output_dim=128):
+    def __init__(self, input_dim=3, output_dim=128):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(input_dim, 32), nn.BatchNorm1d(32), nn.GELU(),
-            nn.Linear(32, 128),       nn.BatchNorm1d(128), nn.GELU(),
+            nn.Linear(input_dim, 32),  nn.BatchNorm1d(32),  nn.GELU(),
+            nn.Linear(32, 128),        nn.BatchNorm1d(128), nn.GELU(),
             nn.Linear(128, output_dim)
         )
     def forward(self, x): return self.net(x)
@@ -92,97 +95,77 @@ def fix_head_indice_keys(model):
 # ---------------------------------------------------------
 # 4. ADVERSARIAL OPTIMIZATION LOOP
 # ---------------------------------------------------------
-def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack, 
-                               head_idx=0, num_iters=100, lr=1.0, alpha=1.0, beta=0.5):
+def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack,
+                               init_theta=None,
+                               head_idx=0, num_iters=500, lr=0.05, alpha=10.0, beta=5.0):
     """
-    Executes Part III: Optimizes theta based on Missing and New detection proxies.
+    Optimizes theta = [x, y, angle] to maximize heatmap disruption.
+    Theta lives in physical coordinates; min-max normalized to [0,1] before surrogate.
     """
     print("\n" + "="*50)
-    print("PHASE 1: COMPUTING CLEAN BASELINE (y_0)")
+    print("PHASE 1: COMPUTING CLEAN BASELINE (H_0)")
     print("="*50)
 
-    # 1. Ensure model is in the correct Pseudo-Train state
+    # 1. Prepare Model State
     for param in model.parameters():
         param.requires_grad = False
-    
     model.eval()
     for name, module in model.named_modules():
         if 'backbone_3d' in name:
-            module.train() # Keep spconv graph alive
+            module.train()
         if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
             module.eval()
 
-    # 2. Run Clean Forward Pass
+    # 2. Clean Forward Pass
     with torch.no_grad():
         _ = model(data_dict)
-        # Extract the clean heatmap for the target head (e.g., Cars)
         clean_hm_logits = model.dense_head.forward_ret_dict['pred_dicts'][head_idx]['hm']
         H_0 = torch.sigmoid(clean_hm_logits).detach()
 
-    # 3. Define the Spatial Masks (M_obj and M_bg)
-    TAU_OBJ = 0.1  # Threshold for existing objects
-    TAU_BG  = 0.05 # Threshold for background
-    
+    # 3. Spatial Masks
+    TAU_OBJ = 0.1
+    TAU_BG  = 0.05
     mask_obj = (H_0 > TAU_OBJ)
     mask_bg  = (H_0 < TAU_BG)
-    
-    print(f"Detected {mask_obj.sum().item()} features belonging to real objects.")
-    print(f"Detected {mask_bg.sum().item()} features belonging to background.")
+    print(f"Object features: {mask_obj.sum().item()}")
+    print(f"Background features: {mask_bg.sum().item()}")
 
     print("\n" + "="*50)
-    print(f"PHASE 2: OPTIMIZING THETA (Gradient Ascent on J(theta))")
+    print("PHASE 2: OPTIMIZING THETA (Gradient Ascent on J(theta))")
     print("="*50)
 
-    # # --- NEW: Define the physical bounds used during training ---
-    # bounds_min = torch.tensor([-30.0, -30.0, 0.0], device='cuda')
-    # bounds_max = torch.tensor([30.0, 30.0, 180.0], device='cuda')
-
-    # 4. Initialize Theta (x, y placement)
+    # === FIX 3: Default initialization within valid physical bounds ===
+    if init_theta is None:
+        init_theta = [0.0, 0.0, 90.0]  # X, Y, Angle 
+    
     theta = nn.Parameter(
-        torch.tensor([[0.0, 0.0]], dtype=torch.float32, device='cuda'),
+        torch.tensor([init_theta], dtype=torch.float32, device='cuda'),
         requires_grad=True
     )
     optimizer = optim.Adam([theta], lr=lr)
 
-    # --- ADD TRACKING LISTS HERE ---
-    theta_x_history = []
-    theta_y_history = []
-    # theta_a_history = [] # Angle tracking
-    loss_history = [] # <-- NEW: Tracking the loss
+    theta_x_history, theta_y_history, theta_a_history, loss_history = [], [], [], []
 
-    # 5. Setup the Differentiable Pipeline (Hooks)
+    # 5. Hooks
     tracked_hm = {}
     handles = []
 
-    def make_hm_hook():
-        def hook(module, inp, output):
-            tracked_hm['adv_hm'] = output.features if hasattr(output, 'features') else output
-        return hook
+    def hm_hook(module, inp, output):
+        tracked_hm['adv_hm'] = output.features if hasattr(output, 'features') else output
 
-    # Hook the target head to get \hat{y}(\theta)
-    modules_dict = dict(model.named_modules())
-    target_head = model.dense_head.heads_list[head_idx].hm
-    handles.append(target_head.register_forward_hook(make_hm_hook()))
-
-    # Hook the chosen layer \ell to inject g_\ell(\theta)
+    # === FIX 4: Min-max normalization to [0,1], no output denormalization ===
     def injection_hook(module, inp, output):
-        '''
-            Because theta is now a physical coordinate (e.g., [5.0, -12.0, 45.0]), 
-            you must normalize it right before it goes into the surrogate.
-        '''
+        # Normalize physical theta to [0, 1] (matching training)
+        theta_norm = (theta - BOUNDS_MIN) / (BOUNDS_MAX - BOUNDS_MIN)
+        theta_norm = theta_norm * 2.0 - 1.0
+        
+        # Surrogate output is already real-scale (Y was NOT normalized)
+        delta = surrogate(theta_norm)
+        delta = delta.expand(output.features.shape[0], -1)
+        return output.replace_feature(output.features + delta)
 
-        # --- NEW: Normalize physical theta to [-1, 1] for the MLP ---
-        # theta_norm = (theta - bounds_min) / (bounds_max - bounds_min)
-        # theta_norm = theta_norm * 2.0 - 1.0
-
-        # Get the feature shock
-        delta_phi = surrogate(theta)                                   
-        delta = delta_phi.expand(output.features.shape[0], -1)        
-
-        # new_output = output.replace_feature(output.features + DELTA_SCALE*delta)
-        new_output = output.replace_feature(output.features + delta)
-        return new_output
-    
+    modules_dict = dict(model.named_modules())
+    handles.append(model.dense_head.heads_list[head_idx].hm.register_forward_hook(hm_hook))
     handles.append(modules_dict[layer_to_attack].register_forward_hook(injection_hook))
 
     # 6. Optimization Loop
@@ -190,159 +173,127 @@ def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack,
         optimizer.zero_grad()
         tracked_hm.clear()
 
-        # Re-initialize grad tape for the backbone features
         if 'voxel_features' in data_dict:
             data_dict['voxel_features'].requires_grad_(True)
 
-        # Forward Pass through differentiable pipeline
         _ = model(data_dict)
-        
-        # Get \hat{H}_\theta (yhat(theta))
         H_adv = torch.sigmoid(tracked_hm['adv_hm'])
 
-        # Calculate Differentiable Proxies
-        # 1. Missing Proxy: Suppress H_adv where mask_obj is True
-        # Missing: mean suppression of real-object cells
-        #   H_0 is detached baseline; (H_0 - H_adv) > 0 when we push detections down
         missing_proxy = ((H_0 - H_adv)[mask_obj].mean()
                          if mask_obj.sum() > 0
                          else torch.tensor(0.0, device='cuda'))
-        
-        # 2. New Proxy: Excite H_adv where mask_bg is True
-        new_proxy = H_adv[mask_bg].mean() if mask_bg.sum() > 0 else torch.tensor(0.0, device='cuda')
-
-        # |∆N|: total heatmap change (captures both suppression and hallucination)
+        new_proxy = (H_adv[mask_bg].mean()
+                     if mask_bg.sum() > 0
+                     else torch.tensor(0.0, device='cuda'))
         delta_N_proxy = (H_adv - H_0).abs().mean()
 
-        # J(theta) = |∆N| + alpha * Missing + beta * New
         loss = delta_N_proxy + alpha * missing_proxy + beta * new_proxy
-
-        # # Combined Objective (Minimize this to Maximize Disruption)
-        # # We subtract loss_new because we want the optimizer to push fake detections UP
-        # loss = (alpha * loss_missing) - (beta * loss_new)
-
         (-loss).backward()
-
         optimizer.step()
 
-        # === UPDATED CLAMPING ===
-        # Keep the optimizer strictly inside the normalized bounds [-1, 1]
+        # === FIX 5: Clamp to physical bounds, not z-score ranges ===
         with torch.no_grad():
-            theta[0, 0].clamp_(-30.0, 30.0)
-            theta[0, 1].clamp_(-30.0, 30.0)
-            # theta[0, 2].clamp_(0.0, 180.0)
+            theta[0, 0].clamp_(BOUNDS_MIN[0].item(), BOUNDS_MAX[0].item())  # X: [-30, 30]
+            theta[0, 1].clamp_(BOUNDS_MIN[1].item(), BOUNDS_MAX[1].item())  # Y: [-30, 30]
+            theta[0, 2].clamp_(BOUNDS_MIN[2].item(), BOUNDS_MAX[2].item())  # Angle: [0, 360]
 
-            
-            # --- NEW: Convert normalized theta back to physical values for logging ---
-            # theta_physical = ((theta + 1.0) / 2.0) * (bounds_max - bounds_min) + bounds_min
-            
-            current_x = theta[0, 0].item()
-            current_y = theta[0, 1].item()
-            # current_a = theta[0, 2].item()
+        # Logging
+        theta_x_history.append(theta[0, 0].item())
+        theta_y_history.append(theta[0, 1].item())
+        theta_a_history.append(theta[0, 2].item())
+        loss_history.append(loss.item())
 
-        # --- SAVE THETA AT EACH STEP ---
-        theta_x_history.append(current_x)
-        theta_y_history.append(current_y)
-        # theta_a_history.append(current_a)
-        loss_history.append(loss.item()) # <-- NEW: Saving the loss
+        grad_str = ("None" if theta.grad is None 
+                    else f"[{theta.grad[0,0].item():.6e}, {theta.grad[0,1].item():.6e}, {theta.grad[0,2].item():+.6e}]")
 
-        # --- THETA DIAGNOSTIC: print every step ---
-        grad_str = "None" if theta.grad is None else f"[{theta.grad[0,0].item():.6e}, {theta.grad[0,1].item():.6e}]"
+        if step % 50 == 0:
+            print(f"  Step {step:03d} | "
+                  f"theta=[X:{theta[0,0].item():+.2f}, Y:{theta[0,1].item():+.2f}, A:{theta[0,2].item():.1f}] | "
+                  f"grad={grad_str} | "
+                  f"loss={loss.item():.6f} | "
+                  f"missing={missing_proxy.item():.6f} | "
+                  f"new={new_proxy.item():.6f}")
 
-        print(f"  Step {step:03d} | "
-              f"theta=[{theta[0,0].item():+.6f}, {theta[0,1].item():+.6f}] | "
-              f"theta.grad={grad_str} | "
-              f"loss={loss.item():.6f} | "
-              f"missing={missing_proxy.item():.6f} | "
-              f"new={new_proxy.item():.6f}")
-
-    # Cleanup
     for h in handles:
         h.remove()
 
     print("\nOptimization Complete.")
-
-    # --- PLOT THE RESULTS ---
-    # plot_theta_trajectory(theta_x_history, theta_y_history, theta_a_history, loss_history) # <-- UPDATED
-    plot_theta_trajectory(theta_x_history, theta_y_history, loss_history)
+    plot_theta_trajectory(theta_x_history, theta_y_history, theta_a_history, loss_history)
     return theta.detach()
 
+
 # ---------------------------------------------------------
-# NEW 3-PANEL PLOTTING FUNCTION
+# PLOTTING FUNCTION
 # ---------------------------------------------------------
-def plot_theta_trajectory(x_hist, y_hist, loss_hist):
-    import matplotlib.pyplot as plt
-    """Generates a 3-part plot showing loss, coordinate convergence, and 2D trajectory."""
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5)) # Changed to 4 subplots
+def plot_theta_trajectory(x_hist, y_hist, a_hist, loss_hist):
+    fig, axes = plt.subplots(1, 4, figsize=(24, 5))
     epochs = range(len(x_hist))
 
-    # Plot 1: Loss Convergence (NEW)
+    # Plot 1: Loss
     axes[0].plot(epochs, loss_hist, color='black', linewidth=2)
     axes[0].set_title('Disruption Value over Time')
-    axes[0].set_xlabel('Optimization Step (Epoch)')
-    axes[0].set_ylabel('Disruption Score (Higher is Better)')
+    axes[0].set_xlabel('Optimization Step')
+    axes[0].set_ylabel('Disruption Score (Higher = Better)')
     axes[0].grid(True, linestyle=':', alpha=0.7)
 
-    # Plot 2: X and Y over Epochs
+    # Plot 2: X and Y
     axes[1].plot(epochs, x_hist, label='Theta X', color='blue', linewidth=2)
     axes[1].plot(epochs, y_hist, label='Theta Y', color='red', linewidth=2)
     axes[1].set_title('Theta Coordinates over Time')
-    axes[1].set_xlabel('Optimization Step (Epoch)')
-    axes[1].set_ylabel('Physical Distance (Meters)')
+    axes[1].set_xlabel('Optimization Step')
+    axes[1].set_ylabel('Physical Distance (m)')
     axes[1].legend()
     axes[1].grid(True, linestyle=':', alpha=0.7)
 
-    # # Plot 3: Angle over Epochs (NEW)
-    # axes[2].plot(epochs, a_hist, label='Theta Angle', color='orange', linewidth=2)
-    # axes[2].set_title('Wall Angle over Time')
-    # axes[2].set_xlabel('Optimization Step')
-    # axes[2].set_ylabel('Angle (Degrees)')
-    # axes[2].legend()
-    # axes[2].grid(True, linestyle=':', alpha=0.7)
-
-    # Plot 4: 2D Spatial Trajectory (Bird's Eye View)
-    axes[2].plot(x_hist, y_hist, color='purple', linestyle='-', linewidth=1.5, alpha=0.6)
-    axes[2].scatter(x_hist[0], y_hist[0], color='green', marker='o', s=100, label='Start (0,0)')
-    axes[2].scatter(x_hist[-1], y_hist[-1], color='red', marker='*', s=200, label=f'End ({x_hist[-1]:.2f}, {y_hist[-1]:.2f})')
-    
-    # Add a little padding to the map
-    axes[2].set_xlim(min(x_hist) - 2.0, max(x_hist) + 2.0)
-    axes[2].set_ylim(min(y_hist) - 2.0, max(y_hist) + 2.0)
-    
-    axes[2].set_title('2D Search Trajectory')
-    axes[2].set_xlabel('X Coordinate')
-    axes[2].set_ylabel('Y Coordinate')
+    # Plot 3: Angle
+    axes[2].plot(epochs, a_hist, label='Theta Angle', color='orange', linewidth=2)
+    axes[2].set_title('Wall Angle over Time')
+    axes[2].set_xlabel('Optimization Step')
+    axes[2].set_ylabel('Angle (Degrees)')
     axes[2].legend()
-    axes[2].grid(True, linestyle='--', alpha=0.5)
+    axes[2].grid(True, linestyle=':', alpha=0.7)
+
+    # Plot 4: 2D Trajectory
+    axes[3].plot(x_hist, y_hist, color='purple', linestyle='-', linewidth=1.5, alpha=0.6)
+    axes[3].scatter(x_hist[0], y_hist[0], color='green', marker='o', s=100, 
+                    label=f'Start ({x_hist[0]:.1f}, {y_hist[0]:.1f})')
+    axes[3].scatter(x_hist[-1], y_hist[-1], color='red', marker='*', s=200, 
+                    label=f'End ({x_hist[-1]:.2f}, {y_hist[-1]:.2f})')
+    
+    axes[3].set_xlim(BOUNDS_MIN[0].item() - 2, BOUNDS_MAX[0].item() + 2)
+    axes[3].set_ylim(BOUNDS_MIN[1].item() - 2, BOUNDS_MAX[1].item() + 2)
+    
+    rect = plt.Rectangle((BOUNDS_MIN[0].item(), BOUNDS_MIN[1].item()),
+                         BOUNDS_MAX[0].item() - BOUNDS_MIN[0].item(),
+                         BOUNDS_MAX[1].item() - BOUNDS_MIN[1].item(),
+                         fill=False, color='black', linestyle='--', linewidth=2, label='Boundary')
+    axes[3].add_patch(rect)
+
+    axes[3].set_title('2D Search Trajectory')
+    axes[3].set_xlabel('X Coordinate')
+    axes[3].set_ylabel('Y Coordinate')
+    axes[3].legend()
+    axes[3].grid(True, linestyle='--', alpha=0.5)
 
     plt.tight_layout()
-    out_file = '/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/theta_optimization/theta_convergence_plot_v2.png'
+    out_file = '/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/optimization/theta_convergence_plot_v3.png'
     plt.savefig(out_file, dpi=150)
-    print(f"\n✅ Convergence plot saved to: {out_file}")
+    plt.close()
+    print(f"\nConvergence plot saved to: {out_file}")
 
 
 # ---------------------------------------------------------
-# 5. MAIN
+# MAIN
 # ---------------------------------------------------------
 def main():
     DATA_PATH = Path(
-        '/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/isaacsim/data/ply/sample_bg.npy'
+        '/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/isaacsim/data/ply'
     )
     logger = common_utils.create_logger()
 
     if not DATA_PATH.exists():
         print(f"Error: Data file not found at {DATA_PATH}")
         return
-    
-    # if not SURROGATE_DATA_PATH.exists():
-    #     print(f"Error: Surrogate training data containing bounds not found at {SURROGATE_DATA_PATH}")
-    #     return
-    
-    # Load Normalization Bounds
-    # print("--- Loading Normalization Bounds ---")
-    # data_info = torch.load(SURROGATE_DATA_PATH, map_location='cuda')
-    # bounds_min = data_info['x_bounds_min'].cuda()
-    # bounds_max = data_info['x_bounds_max'].cuda()
 
     print("--- Loading VoxelNeXt ---")
     cfg_from_yaml_file(CFG_FILE, cfg)
@@ -353,42 +304,19 @@ def main():
     model = build_network(cfg.MODEL, len(cfg.CLASS_NAMES), demo_dataset)
     model.load_params_from_file(CKPT_FILE, logger=logger, to_cpu=True)
     model.cuda()
-    
     fix_head_indice_keys(model)
 
-    # ========================== NEW PART ==========================
     # Prepare Data
     data_dict = demo_dataset[0]
     data_dict = demo_dataset.collate_batch([data_dict])
     load_data_to_gpu(data_dict)
 
-    # === POINT CLOUD RANGE CHECK ===
-    points = np.load('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/isaacsim/data/ply/sample_bg.npy')
+    # Point cloud sanity check
+    points = np.load('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/isaacsim/data/ply/sample_bg.npy')
     print(f"Point cloud shape: {points.shape}")
     print(f"X range: [{points[:, 0].min():.2f}, {points[:, 0].max():.2f}]")
     print(f"Y range: [{points[:, 1].min():.2f}, {points[:, 1].max():.2f}]")
     print(f"Z range: [{points[:, 2].min():.2f}, {points[:, 2].max():.2f}]")
-    # ================================
-
-    # This can be deleted not useful for the actual optimization
-    def check_activation_magnitude(model, data_dict):
-        mags = {}
-        def hook(name):
-            def fn(module, inp, out):
-                mags[name] = out.features.norm(dim=1).mean().item()
-            return fn
-        handles = []
-        for name, module in model.named_modules():
-            if name in ['backbone_3d.conv4', 'backbone_3d.shared_conv']:
-                handles.append(module.register_forward_hook(hook(name)))
-        
-        model.eval()  # ← THIS IS MISSING IN YOUR VERSION
-
-        with torch.no_grad():
-            model(data_dict)
-        for h in handles: h.remove()
-        print(f"\nActivation norms: {mags}")
-    # =============================== END ==========================
 
     # Load Surrogate
     print("--- Loading Surrogate Model ---")
@@ -397,36 +325,34 @@ def main():
     surrogate.cuda()
     surrogate.eval()
 
-    # ===================================== NEW ==================================
-    with torch.no_grad():
-        test_theta = torch.tensor([[0.0, 0.0]], dtype=torch.float32, device='cuda')
-        delta = surrogate(test_theta)
-        print(f"Surrogate output norm:   {delta.norm().item():.4f}")
-        print(f"Surrogate output range:  [{delta.min().item():.4f}, {delta.max().item():.4f}]")
-        print(f"Surrogate output sample: {delta[0, :8]}")
+    # === Sanity check: verify surrogate outputs at known points ===
+    # print("\n--- Surrogate Sanity Check ---")
+    # with torch.no_grad():
+    #     for x, y, a in [(-11, 10, 90), (0, 0, 90), (1.7, 8.9, 95)]:
+    #         t = torch.tensor([[x, y, a]], device='cuda', dtype=torch.float32)
+    #         t_norm = (t - BOUNDS_MIN) / (BOUNDS_MAX - BOUNDS_MIN)  # [0, 1]
+    #         delta = surrogate(t_norm)
+    #         print(f"  theta=({x}, {y}, {a}) -> norm={delta.norm():.4f}, "
+    #               f"range=[{delta.min():.4f}, {delta.max():.4f}]")
 
-    check_activation_magnitude(model, data_dict)
-    # ===================================== END ===================================
-
-    # Execute Part C: Optimize Placement
+    # Execute Optimization
     optimal_theta = optimize_placement_j_theta(
-        model=model, 
-        surrogate=surrogate, 
-        data_dict=data_dict, 
+        model=model,
+        surrogate=surrogate,
+        data_dict=data_dict,
         layer_to_attack=LAYER_TO_ATTACK,
-        # bounds_min=bounds_min,
-        # bounds_max=bounds_max,
-        head_idx=0,         # Change if targeting a different class head
-        num_iters=500,      # Adjust iterations as needed
-        lr=1.0,            # Learning rate for position updates
-        alpha=10.0,         # Weight for suppressing existing objects
-        beta=5.0            # Weight for hallucinating new objects
+        init_theta=[0.0, 0.0, 90.0],  # Physical: X(m), Y(m), Angle(deg)
+        head_idx=0,
+        num_iters=2000,
+        lr=0.05,
+        alpha=10.0,
+        beta=5.0
     )
 
-    print(f"\nFinal Optimal Reflector Placement (Physical):")
-    print(f"X: {optimal_theta[0, 0].item():.2f}m")
-    print(f"Y: {optimal_theta[0, 1].item():.2f}m")
-    # print(f"Angle: {optimal_theta[0, 2].item():.1f}°")
+    print(f"\nFinal Optimal Reflector Placement:")
+    print(f"  X:     {optimal_theta[0, 0].item():+.2f} m")
+    print(f"  Y:     {optimal_theta[0, 1].item():+.2f} m")
+    print(f"  Angle: {optimal_theta[0, 2].item():.1f}°")
 
 
 if __name__ == '__main__':

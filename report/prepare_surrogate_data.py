@@ -8,11 +8,11 @@ import pickle
 
 # --- CONFIGURATION ---
 # Folder containing your .pth files
-DATA_DIR = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/recorded_features/v2')
+DATA_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/feature_extraction')
 # 2. Path to Simulation Metadata (.pkl files) - Contains the Theta (x, y)
-RAW_DATA_DIR = Path('/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/dataset_out_xy/v2')
+RAW_DATA_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/isaacsim/data')
 # Where to save the processed training data
-OUTPUT_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/report/model')
+OUTPUT_DIR = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/model')
 OUTPUT_FILE = OUTPUT_DIR / 'surrogate_training_data_F6_v2.pt'
 # The specific layer we are targeting
 LAYER_NAME = 'F6' 
@@ -36,9 +36,10 @@ def get_theta_from_pkl(scene_id):
         # data['object_position'] is [x, y, z]
         pos = data['object_position']
 
-        angle = data.get('object_z_rotating_deg', 0.0)
+        angle = data.get('object_z_rotation_deg', 0.0)
 
         return np.array([pos[0], pos[1], angle], dtype=np.float32)
+        # return np.array([pos[0], pos[1]], dtype=np.float32)
     except Exception as e:
         print(f"Error reading pickle {pkl_path}: {e}")
         return None
@@ -60,7 +61,7 @@ def prepare_data():
         print(f"CRITICAL ERROR: Baseline file not found at {baseline_path}")
         return
     
-    print(f"Loading Baseline: {baseline_path.name}...")
+    print(f"Loading Baseline: {baseline_path.name}... | {baseline_path}")
     data_bg = torch.load(baseline_path, weights_only=False)
     
     # Extract Baseline Features & Indices (Move to CPU/Numpy)
@@ -156,7 +157,17 @@ def prepare_data():
         # Define the bounds based on your data collection script
         # X_RANGE = [-30, 30], Y_RANGE = [-30, 30], Z_ROT_RANGE = [0, 180]
         bounds_min = torch.tensor([-30.0, -30.0, 0.0], dtype=torch.float32)
-        bounds_max = torch.tensor([30.0, 30.0, 180.0], dtype=torch.float32)
+        bounds_max = torch.tensor([30.0, 30.0, 360.0], dtype=torch.float32)
+         # X: [x, y, angle] — different units, different scales
+        # X_mean = X_tensor.mean(dim=0)
+        # X_std = X_tensor.std(dim=0)
+        # X_std[X_std == 0] = 1.0
+        # X_norm = (X_tensor - X_mean) / X_std
+
+        # Y_mean = Y_tensor.mean(dim=0)
+        # Y_std = Y_tensor.std(dim=0)
+        # Y_std[Y_std == 0] = 1.0
+        # Y_norm = (Y_tensor - Y_mean) / Y_std
 
         # Min-Max Scaling to [0, 1]
         X_norm = (X_tensor - bounds_min) / (bounds_max - bounds_min)
@@ -165,14 +176,20 @@ def prepare_data():
         X_norm = X_norm * 2.0 - 1.0
 
         save_dict = {
-            'X': X_tensor, 
+            'X': X_norm, 
             'Y': Y_tensor, 
             'layer': LAYER_NAME,
-            'description': 'X is (x, y, z_rot) normalized to [-1, 1]. Y is Mean Delta Phi Vector',        
+            'description': ' X is (x, y, z_rot) normalized to [-1, 1]. Y is Mean Delta Phi Vector',        
 
             # CRITICAL: Save the bounds so you can reverse this later!
+            # Z-score stats (need these at inference to normalise/denormalise)
+            # 'X_mean': X_mean,
+            # 'X_std': X_std,
+            # 'Y_mean': Y_mean,
+            # 'Y_std': Y_std,  
+
             'x_bounds_min': bounds_min,
-            'x_bounds_max': bounds_max    
+            'x_bounds_max': bounds_max
         }
 
         # Create the folder if it doesn't exist

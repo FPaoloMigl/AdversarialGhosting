@@ -8,7 +8,7 @@ from torch.utils.data import TensorDataset, DataLoader
 
 # --- CONFIGURATION ---
 # Input Data (Prepared in previous step)
-DATA_FILE = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step1/model/surrogate_training_data_F6_v2.pt')
+DATA_FILE = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/model/surrogate_training_data_F6_v2.pt')
 # Output Model File
 # OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F4.pth'
 OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F6_v2.pth'
@@ -17,22 +17,18 @@ PLOT_FILE = DATA_FILE.parent / 'surrogate_training_loss_F6_v2.png'
 
 # 1. Define the Model Architecture g_ell(theta)
 class SurrogateModel(nn.Module):
-    def __init__(self, input_dim=2, output_dim=128):
+    def __init__(self, input_dim=3, output_dim=128):
         super(SurrogateModel, self).__init__()
-        # We use an "Enhanced MLP" for better regression accuracy
         self.net = nn.Sequential(
-            # Layer 1: Input (x,y) -> High dim feature space
             nn.Linear(input_dim, 32),
-            nn.BatchNorm1d(32), # Stabilizes training
-            nn.GELU(),           # Smooth activation (better for regression than ReLU)
-            
-            # Layer 2: Deep processing
+            nn.BatchNorm1d(32),
+            nn.GELU(),
+
             nn.Linear(32, 128),
             nn.BatchNorm1d(128),
             nn.GELU(),
             
-            # Layer 3: Output the Feature Vector Delta Phi
-            nn.Linear(128, output_dim) 
+            nn.Linear(128, output_dim),
         )
         
     def forward(self, theta):
@@ -51,7 +47,7 @@ def train_and_save():
     # --- Load Dataset D ---
     print(f"Loading data from {DATA_FILE.name}...")
     data = torch.load(DATA_FILE)
-    Theta = data['X']        # Inputs: theta_j (Position)
+    Theta = data['X']        # Inputs: theta_j (Position and angle)
     DeltaPhi = data['Y']     # Targets: Delta phi_ell (Feature Perturbation)
 
     # Ensure shapes are correct (N, 2) and (N, 128)
@@ -60,6 +56,8 @@ def train_and_save():
     # Split Train (80%) / Validation (20%)
     N = len(Theta)
     n_train = int(N * 0.8)
+
+    torch.manual_seed(42) # to reproduce results
     indices = torch.randperm(N)
     
     Theta_train, Theta_val = Theta[indices[:n_train]], Theta[indices[n_train:]]
@@ -89,7 +87,7 @@ def train_and_save():
 
 
     # --- Training Loop ---
-    epochs = 2000
+    epochs = 3000
     train_losses = []
     val_losses = []
 
@@ -151,6 +149,7 @@ def train_and_save():
         
         avg_error = norms.mean().item()
         print(f"Average Prediction Error ||g(theta) - DeltaPhi||: {avg_error:.4f}")
+        print(f"Model error:             {avg_error:.2f}")
         
         if avg_error < 1.0:
             print("Status: EXCELLENT (Model captures the perturbation accurately)")
