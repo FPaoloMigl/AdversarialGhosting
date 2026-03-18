@@ -1,0 +1,101 @@
+============================================================
+FILTERING: Top 20% with 3.0m margin
+============================================================
+Selected 10 diverse placements:
+  #01 | X:+1.16m | Y:+4.52m | A:330.9 | Loss:0.7676
+  #02 | X:+1.64m | Y:+0.77m | A:78.5 | Loss:0.4699
+  #03 | X:+2.88m | Y:+8.66m | A:57.5 | Loss:0.3955
+  #04 | X:+0.55m | Y:+16.62m | A:202.4 | Loss:0.2716
+  #05 | X:+1.74m | Y:+19.42m | A:186.7 | Loss:0.2514
+  #06 | X:-4.72m | Y:-3.25m | A:40.1 | Loss:0.2311
+  #07 | X:-13.16m | Y:+13.50m | A:0.0 | Loss:0.2094
+  #08 | X:+4.48m | Y:-7.07m | A:34.0 | Loss:0.1397
+  #09 | X:+7.07m | Y:-22.19m | A:210.5 | Loss:0.1096
+  #10 | X:-19.33m | Y:+9.38m | A:36.0 | Loss:0.1070
+Diverse top results saved to: AdversarialGhosting/QualityAssessment/step3_angle_decompose/optimization/gmm/top_results_diverse.json
+
+============================================================
+FITTING GMM (2 components on 10 diverse points)
+============================================================
+Heatmap saved to: AdversarialGhosting/QualityAssessment/step3_angle_decompose/optimization/gmm/gmm_placement_heatmap_diverse.png
+
+============================================================
+GMM SUMMARY (2 components)
+============================================================
+
+  Component 1:
+    Center:       X=-3.66m, Y=+8.70m
+    Avg Angle:    116.5 (std: 105.5)
+    Avg Loss:     0.3379
+    Weight:       80.00%
+    Members:      8
+
+  Component 2:
+    Center:       X=+5.77m, Y=-14.63m
+    Avg Angle:    122.2 (std: 88.3)
+    Avg Loss:     0.1247
+    Weight:       20.00%
+    Members:      2
+
+============================================================
+RECOMMENDED PLACEMENTS FOR PHYSICAL VALIDATION
+============================================================
+
+  #1 (GMM Component 1):
+    Position: X=+1.16m, Y=+4.52m
+    Angle:    330.9
+    Loss:     0.7676
+
+  #2 (GMM Component 1):
+    Position: X=+1.64m, Y=+0.77m
+    Angle:    78.5
+    Loss:     0.4699
+
+  #3 (GMM Component 1):
+    Position: X=+2.88m, Y=+8.66m
+    Angle:    57.5
+    Loss:     0.3955
+
+  #4 (GMM Component 1):
+    Position: X=+0.55m, Y=+16.62m
+    Angle:    202.4
+    Loss:     0.2716
+
+  #5 (GMM Component 1):
+    Position: X=+1.74m, Y=+19.42m
+    Angle:    186.7
+    Loss:     0.2514
+
+  #6 (GMM Component 1):
+    Position: X=-4.72m, Y=-3.25m
+    Angle:    40.1
+    Loss:     0.2311
+
+  #7 (GMM Component 1):
+    Position: X=-13.16m, Y=+13.50m
+    Angle:    0.0
+    Loss:     0.2094
+
+  #8 (GMM Component 2):
+    Position: X=+4.48m, Y=-7.07m
+    Angle:    34.0
+    Loss:     0.1397
+
+  #9 (GMM Component 2):
+    Position: X=+7.07m, Y=-22.19m
+    Angle:    210.5
+    Loss:     0.1096
+
+  #10 (GMM Component 1):
+    Position: X=-19.33m, Y=+9.38m
+    Angle:    36.0
+    Loss:     0.1070
+
+============================================================
+OVERALL STATISTICS
+============================================================
+  Total runs:           50
+  Diverse top selected: 10
+  Diversity margin:     3.0m
+  Loss range:           [0.0049, 0.7676]
+  Top loss range:       [0.1070, 0.7676]
