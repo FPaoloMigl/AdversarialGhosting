@@ -17,9 +17,9 @@ Y_RANGE = (-30.0, 30.0)
 Z_ROT_RANGE = (0, 360) # Degrees for Z-axis rotation
 
 # OUTPUT_DIR = "/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/dataset_out_xy/v2/demo"
-OUTPUT_DIR = "/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/isaacsim/data"
+OUTPUT_DIR = "/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall"
 # OUTPUT_DIR_PLY = "/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/dataset_out_xy/v2/demo/ply/"
-OUTPUT_DIR_PLY = "/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/isaacsim/data/ply"
+OUTPUT_DIR_PLY = "/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/ply"
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
@@ -202,7 +202,7 @@ def create_mirror_using_kit_commands(stage, prim_path_to_bind):
     cube_mat_shade = UsdShade.Material(mtl_prim)
     UsdShade.MaterialBindingAPI(cube_prim).Bind(cube_mat_shade, UsdShade.Tokens.strongerThanDescendants)
 
-WALL_SCALE = np.array([0.1, 6.0, 5.0])
+WALL_SCALE = np.array([0.1, 1.0, 2.0])
 WALL_HEIGHT = WALL_SCALE[2]
 
 mirror = VisualCuboid(
@@ -319,7 +319,6 @@ save_to_ply(bg_points, _, ply_path_background)
 print(f"Background captured. Starting Collection of {NUM_SAMPLES} Samples...")
 
 print(f"--- Step 2: Starting Collection of {NUM_SAMPLES} Samples ---")
-lidar_pos = np.array([2.0, 5.0, 1.73])
 
 
 for i in range(NUM_SAMPLES):

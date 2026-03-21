@@ -7,7 +7,7 @@ from pathlib import Path
 from torch.utils.data import TensorDataset, DataLoader
 
 # --- CONFIGURATION ---
-DATA_FILE = Path('AdversarialGhosting/QualityAssessment/step3_angle_decompose/model/surrogate_training_data_F6_v3_sincos.pt')
+DATA_FILE = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/model/surrogate_training_data_F6_v3_sincos.pt')
 OUTPUT_MODEL = DATA_FILE.parent / 'surrogate_model_F6_v3_sincos.pth'
 PLOT_FILE = DATA_FILE.parent / 'surrogate_training_loss_F6_v3_sincos.png'
 
@@ -37,7 +37,8 @@ def train_and_save():
         print(f"Error: Data file not found at {DATA_FILE}")
         return
     
-    device = torch.device("cpu")
+    # device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # --- Load Dataset ---

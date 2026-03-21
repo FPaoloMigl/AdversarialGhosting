@@ -2,7 +2,7 @@ import torch
 from pathlib import Path
 
 # --- Load the file ---
-path = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/model/surrogate_training_data_F6_v2.pt')
+path = Path('/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/model/surrogate_training_data_F6_v3_sincos.pt')
 data = torch.load(path, weights_only=False)
 
 # --- Inspect top-level keys ---
@@ -14,8 +14,8 @@ print("\n=== Detections ===")
 print(f"  X: {data['X'][0]}")
 print(f"  Y : {data['Y'][0]}")
 print(f"  Description : {data['description']}")
-print(f"  x_bounds_min : {data['x_bounds_min']}")
-print(f"  x_bounds_max    : {data['x_bounds_max']}")
+print(f"  xy_bounds_min : {data['xy_bounds_min']}")
+print(f"  xy_bounds_max    : {data['xy_bounds_max']}")
 
 # # --- Inspect layers ---
 # print("\n=== Layers ===")

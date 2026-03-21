@@ -7,9 +7,9 @@ from tqdm import tqdm
 import pickle
 
 # --- CONFIGURATION ---
-DATA_DIR = Path('AdversarialGhosting/QualityAssessment/step3/feature_extraction')
-RAW_DATA_DIR = Path('AdversarialGhosting/QualityAssessment/step3/isaacsim/data')
-OUTPUT_DIR = Path('AdversarialGhosting/QualityAssessment/step3_angle_decompose/model')
+DATA_DIR = Path('AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/feature_extraction')
+RAW_DATA_DIR = Path('AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall')
+OUTPUT_DIR = Path('AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/model')
 OUTPUT_FILE = OUTPUT_DIR / 'surrogate_training_data_F6_v3_sincos.pt'
 LAYER_NAME = 'F6'
 TOP_K = 100  # Number of most-affected voxels to average over
@@ -118,7 +118,7 @@ def prepare_data():
             top_k_indices = np.argpartition(magnitudes, -k)[-k:]
             
             mean_delta = np.mean(diffs[top_k_indices], axis=0)
-
+            # mean_delta = np.mean(diffs, axis=0)
             dataset_X.append(theta)
             dataset_Y.append(mean_delta)
 
