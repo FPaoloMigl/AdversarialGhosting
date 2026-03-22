@@ -14,20 +14,20 @@ CFG_FILE  = '/root/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext
 CKPT_FILE = '/OpenPCDet/checkpoints/voxelnext.pth'
 
 # The physical point clouds from Isaac Sim
-CLEAN_PC_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/ply/sample_bg.npy')
-ADV_PC_PATH   = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/optimization/sample_test.npy')
+CLEAN_PC_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/rivermark/ply/sample_bg.npy')
+ADV_PC_PATH   = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/rivermark/optimization/sample_test.npy')
 
 # Surrogate Model Details (updated to sin/cos version)
-SURROGATE_WEIGHTS = '/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/model/surrogate_model_F6_v3_sincos.pth'
+SURROGATE_WEIGHTS = '/isaacsim_projects/AdversarialGhosting/QualityAssessment/rivermark/model/surrogate_model_F6_v3_sincos.pth'
 LAYER_TO_ATTACK   = 'backbone_3d.conv6'
-THETA_STAR        = [2.39, 5.87, 28.2]  # The optimized coordinate from best run
+THETA_STAR        = [-31.59, 6.87, 303.2]  # The optimized coordinate from best run
 # DELTA_SCALE       = 100.0 / 1800.0
 DELTA_SCALE = 1.0
 SCORE_THRESH      = 0.28
 
 # Physical bounds for x, y (must match training)
-XY_BOUNDS_MIN = torch.tensor([-30.0, -30.0], device='cuda')
-XY_BOUNDS_MAX = torch.tensor([30.0, 30.0], device='cuda')
+XY_BOUNDS_MIN = torch.tensor([-65.5, -8.0], device='cuda')
+XY_BOUNDS_MAX = torch.tensor([5.5, 52.0], device='cuda')
 
 
 # === 2. SURROGATE MODEL DEFINITION (input_dim=4: x, y, sin(a), cos(a)) ===

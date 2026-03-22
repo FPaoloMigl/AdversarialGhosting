@@ -5,6 +5,8 @@ import numpy as np
 from pathlib import Path
 import glob
 import os
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 # --- IMPORT PCDET ---
@@ -14,20 +16,20 @@ from pcdet.datasets import DatasetTemplate
 from pcdet.utils import common_utils
 
 # === CONFIGURATION ===
-SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/model/surrogate_model_F6_v3_sincos.pth')
+SURROGATE_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/rivermark/model/surrogate_model_F6_v3_sincos.pth')
 CFG_FILE  = '/root/OpenPCDet/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext.yaml'
 CKPT_FILE = '/OpenPCDet/checkpoints/voxelnext.pth'
 LAYER_TO_ATTACK = 'backbone_3d.conv6'
 
 # Physical bounds for x and y
-XY_BOUNDS_MIN = torch.tensor([-30.0, -30.0], device='cuda')
-XY_BOUNDS_MAX = torch.tensor([30.0, 30.0], device='cuda')
+XY_BOUNDS_MIN = torch.tensor([-65.5, -8.0], device='cuda')
+XY_BOUNDS_MAX = torch.tensor([5.5, 52.0], device='cuda')
 
 # Angle bounds (physical degrees)
 ANGLE_MIN = 0.0
 ANGLE_MAX = 360.0
 
-OUTPUT_PLOT_DIR = '/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/optimization'
+OUTPUT_PLOT_DIR = '/isaacsim_projects/AdversarialGhosting/QualityAssessment/rivermark/optimization'
 os.makedirs(OUTPUT_PLOT_DIR, exist_ok=True)
 
 
@@ -272,7 +274,7 @@ def optimize_placement_j_theta(model, surrogate, data_dict, layer_to_attack, ini
 # 6. MAIN MULTI-RUN LOOP
 # ---------------------------------------------------------
 def main():
-    DATA_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/ply/sample_bg.npy')
+    DATA_PATH = Path('/isaacsim_projects/AdversarialGhosting/QualityAssessment/rivermark/ply/sample_bg.npy')
     logger = common_utils.create_logger()
 
     if not DATA_PATH.exists():

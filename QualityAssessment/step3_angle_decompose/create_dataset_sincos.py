@@ -7,12 +7,12 @@ from tqdm import tqdm
 import pickle
 
 # --- CONFIGURATION ---
-DATA_DIR = Path('AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/feature_extraction')
-RAW_DATA_DIR = Path('AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall')
-OUTPUT_DIR = Path('AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/model')
+DATA_DIR = Path('AdversarialGhosting/QualityAssessment/rivermark/feature_extraction')
+RAW_DATA_DIR = Path('AdversarialGhosting/QualityAssessment/rivermark')
+OUTPUT_DIR = Path('AdversarialGhosting/QualityAssessment/rivermark/model')
 OUTPUT_FILE = OUTPUT_DIR / 'surrogate_training_data_F6_v3_sincos.pt'
 LAYER_NAME = 'F6'
-TOP_K = 100  # Number of most-affected voxels to average over
+TOP_K = 25  # Number of most-affected voxels to average over
 
 
 def get_theta_from_pkl(scene_id):
@@ -136,8 +136,8 @@ def prepare_data():
         # sin and cos are already in [-1, 1] — no normalization needed
         
         # Normalize x and y to [-1, 1]
-        xy_bounds_min = torch.tensor([-30.0, -30.0], dtype=torch.float32)
-        xy_bounds_max = torch.tensor([30.0, 30.0], dtype=torch.float32)
+        xy_bounds_min = torch.tensor([-65.5, -8.0], dtype=torch.float32)
+        xy_bounds_max = torch.tensor([5.5, 52.0], dtype=torch.float32)
         
         X_xy = X_tensor[:, :2]
         X_sincos = X_tensor[:, 2:]  # Already [-1, 1]

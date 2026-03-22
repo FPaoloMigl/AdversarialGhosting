@@ -12,14 +12,15 @@ import numpy as np
 # --- CONFIGURATION ---
 NUM_SAMPLES = 1000
 # Randomization
-X_RANGE = (-30.0, 30) 
-Y_RANGE = (-30.0, 30.0)
+# X_RANGE = (-30.0, 30) # We start for rivermark at -30, 30, for x is -60, 0
+X_RANGE = (-65.5, 5.5)
+Y_RANGE = (-8.0, 52.0) # 0 60 
 Z_ROT_RANGE = (0, 360) # Degrees for Z-axis rotation
 
 # OUTPUT_DIR = "/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/dataset_out_xy/v2/demo"
-OUTPUT_DIR = "/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall"
+OUTPUT_DIR = "/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/rivermark"
 # OUTPUT_DIR_PLY = "/home/francesco/Francesco/isaacsim_projects/paper/working_code_2026/dataset_out_xy/v2/demo/ply/"
-OUTPUT_DIR_PLY = "/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/ply"
+OUTPUT_DIR_PLY = "/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/rivermark/ply"
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
@@ -72,8 +73,15 @@ world = World(stage_units_in_meters=1.0)
 world.scene.add_default_ground_plane() 
 
 # ----- Add the warehouse -----
-warehouse_usd_path="https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/ArchVis/Industrial/Buildings/Warehouse/Warehouse01.usd"
+# warehouse_usd_path="https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/ArchVis/Industrial/Buildings/Warehouse/Warehouse01.usd"
+warehouse_usd_path = "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Environments/Outdoor/Rivermark/rivermark.usd"
 add_reference_to_stage(warehouse_usd_path, "/World/Warehouse")
+
+# Wait for the scene to fully load
+import omni.usd
+while omni.usd.get_context().get_stage_loading_status()[2] > 0:
+    simulation_app.update()
+print("Environment fully loaded.")
 
 # ----- Add person -----
 person_usd_path = "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/People/DH_Characters_Extended/02c80685-06e3-11ef-ae8a-f4b30194174e_6/02c80685-06e3-11ef-ae8a-f4b30194174e_6.usd"
@@ -154,7 +162,8 @@ for w in wheels: apply_omnipbr(w.prim_path, 0.1, 0.8, (0.05, 0.05, 0.05))
 
 print("✅ Car Created Successfully!")
 
-ghost_car_group.set_local_poses(translations=np.array([[-10.0, -12.0, 0.2]]))
+# ghost_car_group.set_local_poses(translations=np.array([[-10.0, -12.0, 0.2]]))
+ghost_car_group.set_local_poses(translations=np.array([[-57.0, -1.0, 6.2]]))
 
 #----------------------- MOCKING CAR 2 ----------------------
 CAR_PRIM_PATH2 = "/World/GhostCar1"
@@ -181,7 +190,8 @@ for w in wheels2: apply_omnipbr(w.prim_path, 0.1, 0.8, (0.05, 0.05, 0.05))
 
 print("✅ Car Created Successfully!")
 
-ghost_car_group1.set_local_poses(translations=np.array([[-10.0, 10.0, 0.2]]))
+# ghost_car_group1.set_local_poses(translations=np.array([[-10.0, 10.0, 0.2]]))
+ghost_car_group1.set_local_poses(translations=np.array([[-27.0, 15.5, 6.2]]))
 
 #------------------------------ DEFINE WALL ----------------------
 def create_mirror_using_kit_commands(stage, prim_path_to_bind):
@@ -202,7 +212,7 @@ def create_mirror_using_kit_commands(stage, prim_path_to_bind):
     cube_mat_shade = UsdShade.Material(mtl_prim)
     UsdShade.MaterialBindingAPI(cube_prim).Bind(cube_mat_shade, UsdShade.Tokens.strongerThanDescendants)
 
-WALL_SCALE = np.array([0.1, 1.0, 2.0])
+WALL_SCALE = np.array([0.1, 5.0, 6.0])
 WALL_HEIGHT = WALL_SCALE[2]
 
 mirror = VisualCuboid(
@@ -226,7 +236,8 @@ ouster = LidarRtx(
 ouster.prim.GetAttribute("omni:sensor:Core:maxReturns").Set(3)
 ouster.prim.GetAttribute("omni:sensor:Core:scanRateBaseHz").Set(10)
 ouster.prim.GetAttribute("omni:sensor:tickRate").Set(60)
-ouster.set_local_pose(translation=np.array([1.0, 7.0, 1.73]))
+# ouster.set_local_pose(translation=np.array([1.0, 7.0, 1.73]))
+ouster.set_local_pose(translation=np.array([-44.0, 9.5, 7.73]))
 
 ouster.initialize()
 render_product_path = ouster.get_render_product_path()
@@ -328,7 +339,7 @@ for i in range(NUM_SAMPLES):
     rand_y = random.uniform(Y_RANGE[0], Y_RANGE[1])
     
     # Lock Z at half-height so it sits flush on the ground
-    pos = np.array([rand_x, rand_y, WALL_HEIGHT / 2.0])
+    pos = np.array([rand_x, rand_y, (WALL_HEIGHT / 2.0) + 5.0])
     
     # 2. Randomize Z-Rotation (Yaw)
     rand_z_angle = random.uniform(Z_ROT_RANGE[0], Z_ROT_RANGE[1])

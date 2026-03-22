@@ -9,8 +9,8 @@ from scipy.optimize import linear_sum_assignment
 
 # --- CONFIGURATION ---
 IOU_THRESH = 0.5  # Standard threshold for vehicles (NuScenes/KITTI default)
-RECORD_DIR = Path('AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/feature_extraction')
-OUTPUT_DIR = 'AdversarialGhosting/QualityAssessment/step3_angle_decompose/step3_small_wall/metrics'
+RECORD_DIR = Path('AdversarialGhosting/QualityAssessment/rivermark/feature_extraction')
+OUTPUT_DIR = 'AdversarialGhosting/QualityAssessment/rivermark/metrics'
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)

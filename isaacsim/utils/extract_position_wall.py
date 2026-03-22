@@ -5,7 +5,7 @@ from pathlib import Path
 
 # --- CONFIGURATION ---
 # You can put a single file path here, or a folder path to read multiple!
-DATA_PATH = '/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/step3/isaacsim/data/sample_0000.pkl'
+DATA_PATH = '/home/francesco/Francesco/isaacsim_projects/AdversarialGhosting/QualityAssessment/rivermark/sample_0012.pkl'
 
 def extract_wall_info(pkl_path):
     """Reads a single .pkl file and extracts the wall's physical parameters."""
